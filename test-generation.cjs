@@ -1,0 +1,21 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const Core=require('./dist/core.js'),TripData=require('./dist/trips.js');
+const context={Core,module:{exports:{}}};vm.runInNewContext(fs.readFileSync(__dirname+'/dist/stations.js','utf8'),context);const S=context.module.exports;
+assert.equal(S.context({from:'琶洲',to:'白云机场东'}).label,'广东城际');
+assert.equal(S.context({from:'嘉兴南',to:'上海南'}).label,'国铁');
+assert.equal(S.context({from:'新桥',to:'上野'}).label,'JR 东日本');
+assert.equal(S.context({from:'京成上野',to:'成田空港'}).label,'京成电铁');
+assert.equal(S.rank([{operator:'东京地下铁',xy:[35.7,139.7]},{operator:'東日本旅客鉄道',xy:[35.7,139.7]}],'上野',{from:'新桥',to:'上野'})[0].operator,'東日本旅客鉄道');
+assert.equal(TripData.date({'日期':'2020-05-07'},'2026').label,'2020-05-07');
+assert.equal(TripData.date({'日期':'5.7'},'2019').label,'2019-05-07');
+assert.equal(TripData.date({},'行程').day,null);
+assert.equal(TripData.unitPrice({'价格':'108','里程':'219'}),'0.493 /km');
+const bends=TripData.bends(Array.from({length:20},(_,id)=>({id,mode:'air',from:id%2?'HND':'SHA',to:id%2?'SHA':'HND'})));assert.equal(new Set(bends.values()).size,10);assert([...bends.values()].every(v=>Math.abs(v)<=.100001));
+const airports=JSON.parse(fs.readFileSync(__dirname+'/dist/data/airports.json'));assert(airports.SHA&&airports.HND);
+console.log('PASS: airport database, shallow flight curves, dates, unit price, automatic station context');
+
+const elements={};Object.assign(context,{document:{getElementById:id=>elements[id]||(elements[id]={value:'timetable'})},maplibregl:{Map:class{on(){}addControl(){}},NavigationControl:class{}},Services:{read:async()=>null,write:async()=>{},airport:async code=>airports[code]},Timetable:require('./dist/timetable.js'),AbortController,TripData,console});
+vm.runInNewContext(fs.readFileSync(__dirname+'/dist/app.js','utf8'),context);
+context.flight={id:1,mode:'air',from:'SHA',to:'HND',via:'',raw:{},time:TripData.date({},'行程')};
+context.rail={id:2,mode:'rail',from:'A',to:'B',via:'',raw:{},time:TripData.date({},'行程')};
+(async()=>{await vm.runInNewContext('generate(flight)',context);assert(context.flight.path.length>2);vm.runInNewContext("locateMany=async names=>names.map(n=>n==='A'?[0,0]:[0,.01]);railway=async()=>{const p=[[0,0],[.001,.005],[0,.01]];p.nodeIds=[1,2,3];return p}",context);await vm.runInNewContext('generate(rail)',context);assert.equal(context.rail.path.length,3);assert.match(context.rail.routingNote,/未提供完整日期/);console.log('PASS: full flight and railway generation without any date or year');})().catch(e=>{console.error(e);process.exitCode=1});

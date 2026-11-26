@@ -1,7 +1,7 @@
 /* Pure routing helpers: original OSM node IDs preserve topology. */
 const Core=(()=>{
 function km(a,b){let r=Math.PI/180,p=(b[0]-a[0])*r,q=(b[1]-a[1])*r,s=Math.sin(p/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(q/2)**2;return 12742*Math.asin(Math.sqrt(Math.min(1,s)))}
-function ellipse(a,b,bend=.20){
+function ellipse(a,b,bend=.04){
  const rad=Math.PI/180,project=lat=>Math.log(Math.tan(Math.PI/4+Math.max(-85,Math.min(85,lat))*rad/2));
  let end=b[1];while(end-a[1]>180)end-=360;while(end-a[1]<-180)end+=360;
  const ax=a[1]*rad,ay=project(a[0]),bx=end*rad,by=project(b[0]),dx=bx-ax,dy=by-ay;

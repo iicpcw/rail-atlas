@@ -1,0 +1,5 @@
+Airports: OurAirports, public domain. https://ourairports.com/data/
+Downloaded 2026-11-26; includes IATA coordinates of non-closed airports.
+Timetable version index: https://api.raillog.top/api/train-timetables/versions
+RailLog snapshots are reference data, not a guarantee of actual historical service.
+Rail geometry and station queries: OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright
