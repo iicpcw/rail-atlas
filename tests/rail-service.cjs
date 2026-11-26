@@ -8,3 +8,7 @@ assert.throws(()=>R.validate(tokyo,[[0,0],a[1]]),/偏离/);
 assert.throws(()=>R.validate(tokyo,[a[0],[35,138],a[1]]),/途经站/);
 assert.throws(()=>R.validate({features:[]},a),/有效/);
 console.log('PASS: real Tokyo/China railway responses; reject road geometry, distant endpoints and missing via stops');
+const A=[30,120],B=[30,120.01],C=[30,120.02];
+assert.deepEqual(Array.from(R.merge([A,B,C],[C,B,A],C),p=>Array.from(p)),[A,B,C,B,A]);
+assert.throws(()=>R.merge([A,B],[[31,121],[31,121.1]],B),/未连接/);
+console.log('PASS: reversing at a station retains outbound and return geometry; disconnected tracks rejected');

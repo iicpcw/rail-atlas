@@ -78,3 +78,16 @@ OSM 单服务限时 15 秒，失败后切换，失败服务冷却 30 秒；成�
 站名发送至 api.openrailwaymap.org，途经坐标发送至 brouter.de，不上传完整表格。
 数据：OpenStreetMap contributors (ODbL)；站点服务：https://www.openrailwaymap.org/ ；铁路寻路：https://brouter.de/ 。
 修改后运行 node scripts/build.mjs，使用内容哈希应用包，避免混用依赖。
+
+
+2026-11-27 修复：
+- 国铁车次使用仅允许 railway=rail 的 BRouter 自定义规则，避免大站吸附到地铁网络。默认 rail 规则包含 subway；杭州东—嘉兴南实际复现 HTTP 400/no track found，国铁规则对照请求成功。
+- 按相邻停站独立计算并缓存区间，站内允许换向；仅在真实共享轨道坐标处拼接，不用直线补缺口。G7402/G7408 的 2026.11.20 公开快照全程通过真实接口和拼接校验，另验证杭州东—嘉兴南、广州南—深圳北、长沙南—广州南及潮汕—杭州东。停站约束仍不能代替当日实际运行线路证明。
+- 每个服务串行且设请求间隔；HTTP 错误显示服务、状态和响应摘要。403/429 停止该服务，遵守 Retry-After，并保存冷却状态。没有通过大量请求主动触发封禁；本次不能从旧版截图确认此前 403 的具体来源。公共服务不保证大规模生成可用，持续被拒绝需联系服务方或使用自建服务，不通过更换 IP/伪造标头规避。
+- 全部、勾选、铁路、航空四种生成范围；已完成行程直接复用。取消勾选隐藏轨迹，重新勾选恢复，不删除路径。全选/全不选作用于当前导入的全部记录；搜索筛选不修改选择。点击记录正文仍可查看详情。
+- 飞行线为高亮银白色 #fbfdff、2.2 px，配深色描边，适应浅色底图。
+
+寻路规则与错误依据：
+https://github.com/abrensch/brouter/blob/master/misc/profiles2/rail.brf
+https://github.com/abrensch/brouter/blob/master/brouter-server/src/main/java/btools/server/RouteServer.java
+https://wiki.openstreetmap.org/wiki/OpenRailwayMap/API
