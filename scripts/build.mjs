@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createHash} from 'node:crypto';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const files=['services.js','stations.js','core.js','trips.js','cards.js','timetable.js','app.js'];
+const code=files.map(name=>'// '+name+'\n'+fs.readFileSync(path.join(root,'dist',name),'utf8')).join('\n;\n');
+const hash=createHash('sha256').update(code).digest('hex').slice(0,12),name='app.'+hash+'.bundle.js';
+fs.writeFileSync(path.join(root,'dist',name),code);
+let html=fs.readFileSync(path.join(root,'dist/index.html'),'utf8');
+html=html.replace(/<script src="(?:services|stations|core|trips|cards|timetable|app)\.js"><\/script>/g,'').replace(/<script src="app\.[a-f0-9]+\.bundle\.js"><\/script>/g,'');
+html=html.replace('</body>','<script src="'+name+'"></script></body>');
+fs.writeFileSync(path.join(root,'dist/index.html'),html);
+console.log('Built '+name);

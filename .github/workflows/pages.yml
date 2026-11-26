@@ -23,6 +23,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Build versioned application bundle
+        run: node scripts/build.mjs
       - name: Check JavaScript and route edge cases
         run: |
           for file in dist/*.js; do node --check "$file"; done
@@ -30,6 +32,7 @@ jobs:
           node tests/services.cjs
           node tests/history-cache.cjs
           node tests/batched-routing.cjs
+          node tests/bundle.cjs
           node test-generation.cjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
