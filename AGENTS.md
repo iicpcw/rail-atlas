@@ -6,3 +6,6 @@ This app is maintained for the user in this conversation.
 - Publish only app code and documentation. Never commit user spreadsheets, personal itineraries, credentials, local QA pages or .openai hosting metadata.
 - dist/ is the deployed application. Keep asset paths relative so project-site URLs work.
 - Run JavaScript syntax checks and node tests/edge-cases.cjs before pushing. Add targeted checks when behavior changes.
+
+- Run `node scripts/build.mjs` after source changes before updating local outputs. Publish only the bundle referenced in dist/index.html. GitHub Actions rebuilds too.
+- Default rail routing uses OpenRailwayMap station search and BRouter rail profile. Never substitute roads or straight lines. Keep Overpass optional.

@@ -1,0 +1,10 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const Core=require('../dist/core.js');const c={Core,module:{exports:{}}};vm.createContext(c);vm.runInContext(fs.readFileSync(__dirname+'/../dist/rail-service.js','utf8'),c);const R=c.module.exports;
+const tokyo=require('./fixtures/tokyo-rail.json'),china=require('./fixtures/china-rail.json');
+const a=[[35.6661713,139.7582202],[35.7134128,139.7765418]],b=[[30.6932899,120.795528],[31.1550117,121.4248842]];
+assert.equal(R.validate(tokyo,a).length,137);assert.equal(R.validate(china,b).length,405);
+const bad=JSON.parse(JSON.stringify(tokyo)),i=bad.features[0].properties.messages[0].indexOf('WayTags');bad.features[0].properties.messages[1][i]='highway=residential';assert.throws(()=>R.validate(bad,a),/非铁路/);
+assert.throws(()=>R.validate(tokyo,[[0,0],a[1]]),/偏离/);
+assert.throws(()=>R.validate(tokyo,[a[0],[35,138],a[1]]),/途经站/);
+assert.throws(()=>R.validate({features:[]},a),/有效/);
+console.log('PASS: real Tokyo/China railway responses; reject road geometry, distant endpoints and missing via stops');

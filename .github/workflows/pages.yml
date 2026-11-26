@@ -33,6 +33,7 @@ jobs:
           node tests/history-cache.cjs
           node tests/batched-routing.cjs
           node tests/bundle.cjs
+          node tests/rail-service.cjs
           node test-generation.cjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
