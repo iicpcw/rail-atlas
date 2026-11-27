@@ -34,6 +34,7 @@ jobs:
           node tests/batched-routing.cjs
           node tests/bundle.cjs
           node tests/rail-service.cjs
+          node tests/calendar.cjs
           node tests/mainline.cjs
           node tests/bulk-cache.cjs
           node tests/selection.cjs

@@ -1,6 +1,6 @@
 const TripData=(()=>{
 const pad=n=>String(n).padStart(2,'0');
-function clock(value){let s=String(value??'').trim(),h,m;if(!s)return null;
+function clock(value){let s=String(value??'').trim().replace(/\+\s*\d+\s*(?:天|日|d)?/ig,'').replace(/\d+\s*(?:天|日)后|次日|翌日|第三天|后天|当日|当天|[()（）]/g,'').trim(),h,m;if(!s)return null;
 if(/^0?\.\d+$/.test(s)){let n=Math.round(Number(s)*1440);h=Math.floor(n/60);m=n%60}
 else{let x=s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/)||s.match(/^(\d{1,2})(\d{2})$/);if(!x)return null;h=+x[1];m=+x[2]}
 return h>=0&&h<24&&m>=0&&m<60?{minutes:h*60+m,label:pad(h)+':'+pad(m)}:null}

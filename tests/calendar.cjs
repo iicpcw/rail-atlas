@@ -1,0 +1,21 @@
+const assert=require('assert/strict'),fs=require('fs'),vm=require('vm'),TripData=require('../dist/trips.js');
+const ctx={TripData,module:{exports:{}}};vm.runInNewContext(fs.readFileSync(__dirname+'/../dist/calendar.js','utf8'),ctx);const C=ctx.module.exports;
+function trip(raw,mode='rail',from='杭州东',to='嘉兴南',sheet='2026'){raw=C.normalize(raw);return {raw,mode,from,to,sheet,time:TripData.date(raw,sheet)}}
+let t=trip({'日期':'12.31','班次':'D1','出发时间':'2300','到达时间':'0600'});assert.equal(C.iso(C.span(t).end),'2027-01-01');assert(C.includes(t,'2026-12-31'));assert(C.includes(t,'2027-01-01'));assert(!C.includes(t,'2027-01-02'));
+t=trip({'日期':'2024-02-28','班次':'K1','到达时间':'0600+2'});assert.equal(C.iso(C.span(t).end),'2024-03-01');assert.equal(C.days([t]).size,3);
+t=trip({'日期':'2026-05-07','到达日期':'2026-05-09','出发时间':'0800','到达时间':'0900','班次':'FM815'},'air','SHA','HND');assert.equal(C.days([t]).size,3);
+t=trip({'日期':'12.31','到达日期':'1.2','班次':'K1'});assert.equal(C.iso(C.span(t).end),'2027-01-02');
+t=trip({'日期':'2026-06-07','班次':'D914'});t.timetable={stops:[{arrive_day_diff:0},{arrive_day_diff:1}]};assert.equal(C.iso(C.span(t).end),'2026-06-08');
+t.timetable={stops:[{arrive_day_diff:0,arrive_time:'23:59',start_time:'00:10'},{arrive_day_diff:1}]};assert.equal(C.iso(C.span(t).end),'2026-06-07');
+assert.equal(C.validate(trip({'出发日期':'6.8','车次':'G7302'})).length,0);
+assert(C.validate(trip({'日期':'6.8'})).some(s=>s.includes('车次')));
+assert(C.validate(trip({'班次':'G7302'})).some(s=>s.includes('日期')));
+assert.equal(C.validate(trip({'日期':'6.8'},'rail','新桥','上野')).length,0);
+assert.equal(C.validate(trip({'日期':'6.8'},'rail','京成上野','成田空港')).length,0);
+assert.equal(C.validate(trip({'航班号':'FM815'},'air','SHA','HND')).length,0);
+assert(C.validate(trip({},'air','SHA','HND')).some(s=>s.includes('航班号')));
+assert(C.validate(trip({'航班号':'FM815'},'air','上海','HND')).some(s=>s.includes('三字码')));
+assert(C.includes(trip({'航班号':'FM815'},'air','SHA','HND'),'unknown'));
+assert.equal(C.mode({'航班号':'FM815'},'上海','东京'),'air');
+assert.equal(C.span(trip({'日期':'2026-02-30','班次':'G1'})).start,null);
+console.log('PASS: leap year, year boundary, multi-day/explicit/timetable spans, three required-field rules and undated flights');

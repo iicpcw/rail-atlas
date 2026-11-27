@@ -15,7 +15,7 @@ const airports=JSON.parse(fs.readFileSync(__dirname+'/dist/data/airports.json'))
 console.log('PASS: airport database, shallow flight curves, dates, unit price, automatic station context');
 
 const elements={};Object.assign(context,{document:{getElementById:id=>elements[id]||(elements[id]={value:'overpass'})},maplibregl:{Map:class{on(){}addControl(){}},NavigationControl:class{}},Services:{read:async()=>null,write:async()=>{},airport:async code=>airports[code]},Timetable:require('./dist/timetable.js'),AbortController,TripData,console});
-vm.runInNewContext(fs.readFileSync(__dirname+'/dist/app.js','utf8'),context);
-context.flight={id:1,mode:'air',from:'SHA',to:'HND',via:'',raw:{},time:TripData.date({},'行程')};
-context.rail={id:2,mode:'rail',from:'A',to:'B',via:'',raw:{},time:TripData.date({},'行程')};
-(async()=>{await vm.runInNewContext('generate(flight)',context);assert(context.flight.path.length>2);vm.runInNewContext("locateMany=async names=>names.map(n=>n==='A'?[0,0]:[0,.01]);railway=async()=>{const p=[[0,0],[.001,.005],[0,.01]];p.nodeIds=[1,2,3];return p}",context);await vm.runInNewContext('generate(rail)',context);assert.equal(context.rail.path.length,3);assert.equal(context.rail.time.day,null);console.log('PASS: full flight and railway generation without any date or year');})().catch(e=>{console.error(e);process.exitCode=1});
+vm.runInNewContext(fs.readFileSync(__dirname+'/dist/calendar.js','utf8'),context);vm.runInNewContext(fs.readFileSync(__dirname+'/dist/app.js','utf8'),context);
+context.flight={id:1,mode:'air',from:'SHA',to:'HND',via:'',raw:{'班次':'FM815'},time:TripData.date({},'行程')};
+context.rail={id:2,mode:'rail',from:'A',to:'B',via:'',raw:{'班次':'G1'},time:TripData.date({'日期':'2026-06-08'},'行程')};
+(async()=>{await vm.runInNewContext('generate(flight)',context);assert(context.flight.path.length>2);vm.runInNewContext("locateMany=async names=>names.map(n=>n==='A'?[0,0]:[0,.01]);railway=async()=>{const p=[[0,0],[.001,.005],[0,.01]];p.nodeIds=[1,2,3];return p}",context);await vm.runInNewContext('generate(rail)',context);assert.equal(context.rail.path.length,3);assert.notEqual(context.rail.time.day,null);console.log('PASS: undated flight with required number and dated railway generation');})().catch(e=>{console.error(e);process.exitCode=1});
