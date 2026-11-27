@@ -56,6 +56,18 @@ return{aliases,context,rank,names,learn,same,joint};})();
 if(typeof module!=='undefined')module.exports=StationMatch;
 
 ;
+// station-cache.js
+const StationCache=(()=>{
+ const pending=new Map(),remote='https://raw.githubusercontent.com/iicpcw/rail-atlas-data/main/';
+ async function lookup(name,signal){const n=String(name).trim().replace(/站$/,'');if(!n)return[];const part=n.codePointAt(0)%16,key='data/stations/'+part+'.json';
+  if(!pending.has(key))pending.set(key,(async()=>{let value;try{value=await Services.json(key,{signal,timeout:5000})}catch(e){if(signal?.aborted)throw e;value=await Services.json(remote+key,{signal,timeout:8000})}if(value.schema!==1||!value.stations)throw Error('车站坐标缓存格式无效');return value})().catch(e=>{pending.delete(key);throw e}));
+  const data=await pending.get(key);return(data.stations[n]||[]).filter(r=>Number.isFinite(r[0])&&Number.isFinite(r[1])&&Math.abs(r[0])<85&&Math.abs(r[1])<180).map(r=>({name:n,xy:r.slice(0,2),operator:'中国国家铁路',tags:{name:n,railway:'station',train:'yes'},stationId:r[2]}));
+ }
+ return{lookup};
+})();
+if(typeof module!=='undefined')module.exports=StationCache;
+
+;
 // core.js
 /* Pure routing helpers: original OSM node IDs preserve topology. */
 const Core=(()=>{
@@ -78,7 +90,7 @@ function geoJSONPath(path){
 }
 class Heap{constructor(){this.h=[]}push(v){let h=this.h;h.push(v);let i=h.length-1;while(i){let p=(i-1)>>1;if(h[p][0]<=v[0])break;h[i]=h[p];i=p}h[i]=v}pop(){let h=this.h,r=h[0],v=h.pop();if(h.length){let i=0;while(i*2+1<h.length){let j=i*2+1;if(j+1<h.length&&h[j+1][0]<h[j][0])j++;if(h[j][0]>=v[0])break;h[i]=h[j];i=j}h[i]=v}return r}}
 function route(elements,a,b,options={}){let points=new Map(),graph=new Map();for(const w of elements){if(w.type!=='way'||!w.geometry||!w.nodes)continue;w.nodes.forEach((id,i)=>{const g=w.geometry[i];if(g)points.set(id,[g.lat,g.lon])});for(let i=1;i<w.nodes.length;i++){const u=w.nodes[i-1],v=w.nodes[i];if(!points.has(u)||!points.has(v))continue;const d=km(points.get(u),points.get(v));if(!graph.has(u))graph.set(u,[]);if(!graph.has(v))graph.set(v,[]);graph.get(u).push([v,d]);graph.get(v).push([u,d])}}
-function candidates(p){let all=[];for(const [id,xy]of points){const d=km(p,xy);if(d<=1.5&&graph.has(id))all.push([id,d])}all.sort((a,b)=>a[1]-b[1]);if(!all.length)return [];return all.filter(x=>x[1]<=all[0][1]+.12)}
+function candidates(p){let all=[];for(const [id,xy]of points){const d=km(p,xy);if(d<=1.5&&graph.has(id))all.push([id,d])}all.sort((a,b)=>a[1]-b[1]);if(!all.length)return [];return all.filter(x=>x[1]<=all[0][1]+(options.snapSlack??.12))}
 const starts=options.startNodeId!=null?(graph.has(options.startNodeId)?[[options.startNodeId,0]]:[]):options.exactStart?candidates(a).filter(x=>x[1]<1e-7):candidates(a),ends=new Map(candidates(b));if(!starts.length||!ends.size)throw Error('站点附近 1.5 km 内未找到轨道，请检查站点坐标');let heap=new Heap(),cost=new Map(),prev=new Map(),best=Infinity,finish=null;
 for(const [id,snap]of starts){cost.set(id,snap*4);heap.push([snap*4,id])}
 while(heap.h.length){let [d,u]=heap.pop();if(d!==cost.get(u))continue;if(d>=best)break;if(ends.has(u)){const total=d+ends.get(u)*4;if(total<best){best=total;finish=u}}for(const [v,w]of graph.get(u)||[]){let nd=d+w;if(nd<(cost.get(v)??Infinity)){cost.set(v,nd);prev.set(v,u);heap.push([nd,v])}}}
@@ -155,7 +167,8 @@ function candidates(data,name){
   return{name:r.name,operator:[r.operator,r['operator:en'],r.network].filter(Boolean).join(' / '),xy:[Number(r.latitude),Number(r.longitude)],tags:r,osmId:r.osm_id};
  }).filter(r=>r.xy.every(Number.isFinite)&&Math.abs(r.xy[0])<=85&&Math.abs(r.xy[1])<=180);
 }
-async function station(name,signal){
+async function station(name,signal,useLocal=false){
+ if(useLocal&&typeof StationCache!=='undefined'){try{const cached=await StationCache.lookup(name,signal);if(cached.length)return cached}catch(e){if(signal?.aborted)throw e}}
  const query=StationMatch.aliases[name]||name,key='orm-station:v3:'+query,hit=await Services.read(key,30*86400000);
  if(hit){hit.forEach(c=>StationMatch.learn(c.tags));return hit}
  if(Date.now()<stationBlockedUntil)throw Error('铁路车站索引暂时限流，请稍后再试');
@@ -169,7 +182,7 @@ async function locate(names,trip,signal,progress){
  const groups=[],indices=[];
  for(let i=0;i<names.length;i++){
   const name=names[i];if(signal?.aborted)throw Error('已停止');progress?.('铁路站点索引：'+name);
-  try{groups.push(trip.overrides?.[name]?[{name,xy:trip.overrides[name],tags:{},operator:''}]:await station(name,signal));indices.push(i)}
+  try{groups.push(trip.overrides?.[name]?[{name,xy:trip.overrides[name],tags:{},operator:''}]:await station(name,signal,StationMatch.context(trip).label==='国铁'));indices.push(i)}
   catch(e){if(e.stationMissing&&trip.timetable&&i>0&&i<names.length-1)continue;throw e}
  }
  if(groups.length<2)throw Error('有效铁路站点不足');
@@ -179,7 +192,7 @@ async function locate(names,trip,signal,progress){
  trip._matchedStations=chosen.map((c,i)=>({input:names[indices[i]],name:c.name,osmId:c.osmId,xy:c.xy}));
  return chosen.map(c=>c.xy);
 }
-function validate(data,points){
+function validate(data,points,mainline=false){
  const feature=data?.features?.find(f=>f.geometry?.type==='LineString'),coords=feature?.geometry?.coordinates;
  if(!coords||coords.length<3)throw Error('铁路寻路没有返回有效轨道几何');
  const path=coords.map(c=>[c[1],c[0]]);
@@ -187,6 +200,7 @@ function validate(data,points){
  const rows=feature.properties?.messages,index=rows?.[0]?.indexOf('WayTags');
  if(index==null||index<0||rows.length<2)throw Error('铁路寻路缺少轨道标签，未采用此结果');
  for(const row of rows.slice(1))if(!/(?:^|\s)railway=(rail|light_rail|narrow_gauge|tram|subway)(?:\s|$)/.test(String(row[index]||'')))throw Error('路径包含非铁路段，已拒绝作为铁路轨迹');
+ if(mainline&&rows.slice(1).some(r=>!/(?:^|\s)railway=rail(?:\s|$)/.test(r[index])))throw Error('干线铁路结果混入其他轨道');
  if(Core.km(points[0],path[0])>1||Core.km(points.at(-1),path.at(-1))>1)throw Error('铁路吸附点偏离车站超过 1 km');
  for(const p of points)if(!path.some(q=>Core.km(p,q)<1))throw Error('铁路路径未经过指定途经站');
  return path;
@@ -204,6 +218,11 @@ function merge(full,leg,station){
  for(let i=full.length-1;i>=0;i--)if(Core.km(full[i],station)<1&&near.has(key(full[i])))return joined(full.slice(0,i+1),leg.slice(near.get(key(full[i]))+1));
  // Distinct tracks inside one station stay distinct: export two line parts, no fake connector.
  if(Core.km(full.at(-1),leg[0])<.05&&Core.km(leg[0],station)<.35)return joined(full,leg,true);
+ // BRouter rounds OSM coordinates; accept sub-two-metre geometry agreement only.
+ if(typeof RailQuality!=='undefined')for(let i=full.length-1;i>=0;i--){
+  if(Core.km(full[i],station)>1)continue;const hit=RailQuality.nearest(leg,full[i]);
+  if(hit?.distance<.002)return joined(full.slice(0,i+1),leg.slice(hit.index));
+ }
  throw Error('途经站两侧轨道未连接，未用直线拼接；请核对站台或途经线路');
 }
 async function route(points,signal,progress,trip={}){
@@ -212,16 +231,70 @@ async function route(points,signal,progress,trip={}){
  for(let i=1;i<points.length;i++){
   if(signal?.aborted)throw Error('已停止');if(Core.km(points[i-1],points[i])<.001)continue;
   progress?.('铁路分段寻路 '+i+'/'+(points.length-1));
-  const start=full.length?full.at(-1):points[i-1],pair=[start,points[i]],key='rail-leg:v4:'+mainline+':'+JSON.stringify(pair);
+  const start=full.length?full.at(-1):points[i-1],pair=[start,points[i]],key='rail-leg:v5:'+mainline+':'+JSON.stringify(pair);
   let leg=await Services.read(key,30*86400000);
   const stops=trip.timetable?.stops,indices=trip._routeStopIndices||points.map((_,n)=>n),expected=stops?Number(stops[indices[i]]?.mileage)-Number(stops[indices[i-1]]?.mileage):0;
+  const check=(path)=>{RailQuality.assess(path,pair,{expectedKm:expected>0?expected:0});merge(full,path,points[i-1]);return path};
+  try{if(leg)check(leg)}catch{leg=null}
   if(!leg){
-   const {data}=await RailProviders.request(pair,mainline,signal);leg=validate(data,pair);
-   if(mainline){const rows=data.features.find(f=>f.geometry?.type==='LineString').properties.messages,n=rows[0].indexOf('WayTags');if(rows.slice(1).some(r=>!/(?:^|\s)railway=rail(?:\s|$)/.test(r[n])))throw Error('干线铁路结果混入其他轨道，未采用')}
-   leg=RailQuality.trimArrivalLoop(leg,points[i]).path;
-   RailQuality.assess(leg,pair,{expectedKm:expected>0?expected:0});
+   const errors=[];
+   // Retry bounded alternatives for every problematic interval, not train-specific exceptions.
+   for(let attempt=0;attempt<4&&!leg;attempt++){
+    if(signal?.aborted)throw Error('已停止');
+    const reverse=attempt===1||attempt===2,query=reverse?[pair[1],pair[0]]:pair;
+    if(attempt)progress?.('自动修复铁路区间 '+i+'：重新匹配股道 '+attempt+'/3');
+    try{
+     const {data}=await RailProviders.request(query,mainline,signal);
+     let candidate=validate(data,query,mainline);
+     if(mainline){const rows=data.features.find(f=>f.geometry?.type==='LineString').properties.messages,n=rows[0].indexOf('WayTags');if(rows.slice(1).some(r=>!/(?:^|\s)railway=rail(?:\s|$)/.test(r[n])))throw Error('干线铁路结果混入其他轨道，未采用')}
+     if(reverse)candidate.reverse();
+     candidate=RailQuality.trimArrivalLoop(candidate,pair[1]).path;
+     // A departure platform can cause the same detour as an arrival platform.
+     candidate=RailQuality.trimArrivalLoop(candidate.slice().reverse(),pair[0]).path.slice().reverse();
+     leg=check(candidate);
+    }catch(e){if(signal?.aborted)throw e;errors.push(e.message);if(e.status===400||e.status===403||e.status===429||/服务暂不可用/.test(e.message))break}
+   }
+   // Query a wider railway corridor so an intermediate station does not force a bad track snap.
+   if(!leg&&points.length>2&&!signal?.aborted){
+    const corridor=[points[Math.max(0,i-2)],points[Math.min(points.length-1,i+1)]];
+    try{
+     progress?.('自动修复铁路区间 '+i+'：跨相邻站校验线路');
+     const {data}=await RailProviders.request(corridor,mainline,signal),path=validate(data,corridor,mainline);
+     const a=RailQuality.nearest(path,pair[0]),b=RailQuality.nearest(path,pair[1]);
+     if(a&&b&&a.distance<.35&&b.distance<.35&&a.index<=b.index){
+      const candidate=[a.point,...path.slice(a.index,b.index),b.point];leg=check(candidate);
+     }
+    }catch(e){if(signal?.aborted)throw e;errors.push(e.message)}
+   }
+   if(!leg&&typeof Services.overpass==='function'&&Core.km(...pair)<120){
+    try{
+     progress?.('自动修复铁路区间 '+i+'：读取现有轨道并在本机寻路');
+     const margin=.12,box=[Math.min(...pair.map(p=>p[0]))-margin,Math.min(...pair.map(p=>p[1]))-margin,Math.max(...pair.map(p=>p[0]))+margin,Math.max(...pair.map(p=>p[1]))+margin];
+     const network=await Services.overpass('way["railway"="rail"]["service"!~"^(yard|siding|spur)$"]('+box.join(',')+');out geom;',signal,progress);
+     const approach=full.length?([...full].reverse().find(p=>Core.km(p,pair[0])>.8)||full[0]):pair[0];
+     leg=check(Core.route(network,approach,pair[1],{snapSlack:.75}));
+    }catch(e){if(signal?.aborted)throw e;errors.push(e.message)}
+   }
+   if(!leg&&!signal?.aborted){
+    for(const endpoint of [0,1]){
+     for(const offset of [[.001,0],[-.001,0],[0,.0012],[0,-.0012]]){
+      if(leg)break;if(signal?.aborted)throw Error('已停止');
+      try{
+       progress?.('自动修复铁路区间 '+i+'：搜索车站邻近股道');
+       const query=pair.map(p=>p.slice());query[endpoint]=query[endpoint].map((n,k)=>n+offset[k]);
+       const {data}=await RailProviders.request(query,mainline,signal);
+       let candidate=validate(data,pair,mainline);
+       candidate=RailQuality.trimArrivalLoop(candidate,pair[1]).path;
+       candidate=RailQuality.trimArrivalLoop(candidate.slice().reverse(),pair[0]).path.slice().reverse();
+       leg=check(candidate);
+      }catch(e){if(signal?.aborted)throw e;errors.push(e.message);if(e.status===403||e.status===429||/服务暂不可用/.test(e.message))break}
+     }
+     if(leg)break;
+    }
+   }
+   if(!leg)throw Error('自动修复未成功（已尝试 '+errors.length+' 次）：'+errors.at(-1));
    await Services.write(key,leg);
-  }else RailQuality.assess(leg,pair,{expectedKm:expected>0?expected:0});
+  }
   full=merge(full,leg,points[i-1]);
  }
  if(full.length<3)throw Error('铁路路径为空');
@@ -288,9 +361,10 @@ const node=document.createElement('div');node.className='route-cards';node.inner
 // timetable-cache.js
 // Same-origin, immutable public timetable snapshots. Never use future data for a past trip.
 const TimetableCache=(()=>{
+const remote=typeof location!=='undefined'&&location.hostname==='iicpcw.github.io'?'https://raw.githubusercontent.com/iicpcw/rail-atlas-data/main/':'';
 let catalog;const books=new Map(),pending=new Map();
 async function index(signal){
- if(!catalog){const value=await Services.json('data/timetables/index.json',{signal,timeout:5000});if(value.schema!==1||!Array.isArray(value.snapshots))throw Error('时刻表缓存索引无效');let history={snapshots:[]};try{history=await Services.json('data/timetable-history/index.json',{signal,timeout:5000});if(history.schema!==1||!Array.isArray(history.snapshots))history={snapshots:[]}}catch(e){if(signal?.aborted)throw e}catalog={...value,bulkCount:value.snapshots.length,historyRecords:history.snapshots.reduce((n,s)=>n+s.schedules,0),snapshots:[...value.snapshots,...history.snapshots]}}
+ if(!catalog){let origin=remote,value;try{value=await Services.json(origin+'data/timetables/index.json',{signal,timeout:5000})}catch(e){if(signal?.aborted)throw e;origin='';value=await Services.json('data/timetables/index.json',{signal,timeout:5000})}if(value.schema!==1||!Array.isArray(value.snapshots))throw Error('时刻表缓存索引无效');let history={snapshots:[]};try{history=await Services.json(origin+'data/timetable-history/index.json',{signal,timeout:5000});if(history.schema!==1||!Array.isArray(history.snapshots))history={snapshots:[]}}catch(e){if(signal?.aborted)throw e}catalog={...value,bulkCount:value.snapshots.length,historyRecords:history.snapshots.reduce((n,s)=>n+s.schedules,0),snapshots:[...value.snapshots.map(s=>({...s,origin})),...history.snapshots.map(s=>({...s,origin}))]}}
  return catalog;
 }
 async function book(item,signal){
@@ -302,7 +376,7 @@ async function book(item,signal){
   signal?.addEventListener('abort',abort,{once:true});
   try{
    if(!/^[a-f0-9]{64}\.json\.gz$/.test(item.file))throw Error('时刻表文件名无效');
-   const base=item.base==='data/timetable-history/'?item.base:'data/timetables/';const r=await fetch(base+item.file,{signal:controller.signal});if(!r.ok)throw Error('本站时刻表 HTTP '+r.status);
+   const base=item.base==='data/timetable-history/'?item.base:'data/timetables/';const r=await fetch((item.origin===remote?remote:'')+base+item.file,{signal:controller.signal});if(!r.ok)throw Error('本站时刻表 HTTP '+r.status);
    const bytes=await r.arrayBuffer(),stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
    const data=await new Response(stream).arrayBuffer();
    const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),v=>v.toString(16).padStart(2,'0')).join('');
@@ -361,16 +435,15 @@ if(typeof module!=='undefined')module.exports=Timetable;
 ;
 // map-presentation.js
 const MapPresentation=(()=>{
-function airportImage(){const c=document.createElement('canvas');c.width=c.height=48;const x=c.getContext('2d');x.beginPath();for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,r=i%2?9:21,px=24+Math.cos(a)*r,py=24+Math.sin(a)*r;i?x.lineTo(px,py):x.moveTo(px,py)}x.closePath();x.fillStyle='#ffe133';x.strokeStyle='#5c4b00';x.lineWidth=3;x.fill();x.stroke();return x.getImageData(0,0,48,48)}
-function airports(map){if(!map.hasImage('airport-star'))map.addImage('airport-star',airportImage(),{pixelRatio:2});map.addLayer({id:'airport-stars',type:'symbol',source:'stops',filter:['==',['get','mode'],'air'],layout:{'icon-image':'airport-star','icon-size':1.2,'icon-allow-overlap':true,'icon-ignore-placement':true}})}
 function stops(rows){const result=new Map();for(const t of rows)if(t.path&&t.selected!==false)for(const [p,label] of [[t.path[0],t.from],[t.path.at(-1),t.to]]){const key=t.mode+':'+p.join(',');result.set(key,{type:'Feature',properties:{mode:t.mode,label},geometry:{type:'Point',coordinates:[p[1],p[0]]}})}return{type:'FeatureCollection',features:[...result.values()]}}
 function add(map,data,stopData){
  map.addSource('journeys',{type:'geojson',data});map.addSource('stops',{type:'geojson',data:stopData});
- map.addLayer({id:'journey-outline',type:'line',source:'journeys',paint:{'line-color':'#645218','line-width':['match',['get','mode'],'air',6.5,5.5],'line-opacity':['match',['get','mode'],'air',.85,0]}});
- map.addLayer({id:'journey-lines',type:'line',source:'journeys',paint:{'line-color':['match',['get','mode'],'air','#ffe133','#dc3038'],'line-width':['match',['get','mode'],'air',4.5,3.5],'line-opacity':['match',['get','mode'],'air',1,.58]}});
- map.addLayer({id:'stop-points',type:'circle',source:'stops',filter:['!=',['get','mode'],'air'],paint:{'circle-radius':4,'circle-color':'#fff','circle-stroke-color':'#33755b','circle-stroke-width':2}});airports(map);
+ map.addLayer({id:'flight-lines',type:'line',source:'journeys',filter:['==',['get','mode'],'air'],paint:{'line-color':'#e6bf00','line-width':1.5,'line-opacity':.55}});
+ map.addLayer({id:'journey-lines',type:'line',source:'journeys',filter:['!=',['get','mode'],'air'],paint:{'line-color':'#dc3038','line-width':3.5,'line-opacity':.58}});
+ map.addLayer({id:'stop-points',type:'circle',source:'stops',paint:{'circle-radius':4,'circle-color':['match',['get','mode'],'air','#e6bf00','#33755b']}});
+
 }
-return{airports,stops,add};})();
+return{stops,add};})();
 if(typeof module!=='undefined')module.exports=MapPresentation;
 
 ;
@@ -399,16 +472,17 @@ return{create};})();
 // app.js
 const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let selectedDay='',calendarMonth='';
+let failedFirst=false;
 let trips=[],book=null,busy=false,cancel=false,controller=null,cache=new Map(),mapReady=false;
 const map=new maplibregl.Map({container:'map',style:'map-style.json',center:[120.5,32],zoom:4.5,attributionControl:{customAttribution:['站点服务 <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>','铁路寻路 <a href="https://brouter.de/">BRouter</a>']}});map.addControl(new maplibregl.NavigationControl(),'top-right');
 map.on('load',()=>{mapReady=true;MapPresentation.add(map,collection(),MapPresentation.stops(visible()));map.addLayer({id:'journey-hit',type:'line',source:'journeys',filter:['==',['get','clickable'],true],paint:{'line-width':16,'line-opacity':0}});map.on('click','journey-hit',showMapCards);map.on('mouseenter','journey-hit',()=>map.getCanvas().style.cursor='pointer');map.on('mouseleave','journey-hit',()=>map.getCanvas().style.cursor='');draw()});
 map.on('error',()=>{if(!mapReady)$('status').textContent='地图资源加载中；若持续空白，请检查网络后刷新。'});
-function visible(){const f=$('filter').value,q=$('search').value.toLowerCase();return trips.filter(t=>TripCalendar.includes(t,selectedDay)&&(f==='all'||f===t.mode||f==='error'&&t.error)&&[t.from,t.to,t.raw['班次'],t.sheet].join(' ').toLowerCase().includes(q)).sort(TripData.newest)}
+function visible(){const f=$('filter').value,q=$('search').value.toLowerCase();return trips.filter(t=>TripCalendar.includes(t,selectedDay)&&(f==='all'||f===t.mode||f==='error'&&t.error)&&[t.from,t.to,t.raw['班次'],t.sheet].join(' ').toLowerCase().includes(q)).sort((a,b)=>(failedFirst?Number(!!b.error&&!b.path)-Number(!!a.error&&!a.path):0)||TripData.newest(a,b))}
 function collection(){const counts=TripData.counts(trips),paths=displayPaths();return {type:'FeatureCollection',features:visible().filter(t=>t.path&&t.selected!==false).map(t=>({type:'Feature',properties:{id:t.id,clickable:TripData.clickable(t,counts),count:counts.get(TripData.key(t))||1,date:t.time?.label||'',departure:t.time?.departure||'',mode:t.mode,from:t.from,to:t.to,sheet:t.sheet,row:t.row,routeBasis:t.routeBasis||'',timetableVersion:t.timetable?.version||'',routingNote:t.routingNote||'',status:t.mode==='rail'?(t.routeBasis||'OSM 网络推算'):'机场间椭圆弧线'},geometry:Core.geoJSONPath(paths.get(t.id))}))}}
 function draw(){if(!mapReady)return;map.getSource('journeys').setData(collection());map.getSource('stops').setData(MapPresentation.stops(visible()))}
 function fit(path){const paths=displayPaths();let p=path||visible().filter(t=>t.selected!==false).flatMap(t=>paths.get(t.id)||[]);if(!p.length)return;const b=new maplibregl.LngLatBounds();p.forEach(x=>b.extend([x[1],x[0]]));map.fitBounds(b,{padding:{top:65,bottom:110,left:85,right:65},maxZoom:16})}
 
-function renderCalendar(){document.body?.classList?.toggle('has-trips',!!trips.length);const days=TripCalendar.days(trips),months=[...new Set([...days.keys()].sort().map(d=>d.slice(0,7)))],unknown=trips.filter(t=>t.time?.day==null).length;$('calendarPanel').hidden=!trips.length;if(!months.includes(calendarMonth))calendarMonth=months.at(-1)||'';if(selectedDay&&selectedDay!=='unknown'&&!days.has(selectedDay))selectedDay='';$('calendarSelection').textContent=selectedDay==='unknown'?'无日期行程':selectedDay||'全部日期';$('calendarMonth').innerHTML=months.map(m=>`<option value="${m}" ${m===calendarMonth?'selected':''}>${m.slice(0,4)} 年 ${Number(m.slice(5))} 月</option>`).join('');$('calendarMonth').disabled=!months.length;const index=months.indexOf(calendarMonth);$('calendarPrev').disabled=index<=0;$('calendarNext').disabled=index<0||index===months.length-1;$('calendarUnknown').disabled=!unknown;$('calendarUnknown').textContent='无日期行程 ('+unknown+')';$('run').textContent=selectedDay?'生成当前日期全部':'生成全部';if(!calendarMonth){$('calendarDays').innerHTML='<p class="calendar-empty">暂无可识别的行程日期</p>';return}const [y,m]=calendarMonth.split('-').map(Number),first=(new Date(Date.UTC(y,m-1,1)).getUTCDay()+6)%7,last=new Date(Date.UTC(y,m,0)).getUTCDate();let html='<span></span>'.repeat(first);for(let d=1;d<=last;d++){const day=calendarMonth+'-'+String(d).padStart(2,'0'),count=days.get(day)||0;html+=`<button data-day="${day}" ${count?'':'disabled'} aria-label="${day}，${count} 条行程" aria-pressed="${selectedDay===day}" class="${selectedDay===day?'active':''}">${d}${count?'<i></i>':''}</button>`}$('calendarDays').innerHTML=html}
+function renderCalendar(){document.body?.classList?.toggle('has-trips',!!trips.length);const days=TripCalendar.days(trips),months=[...new Set([...days.keys()].sort().map(d=>d.slice(0,7)))],unknown=trips.filter(t=>t.time?.day==null).length;$('calendarPanel').hidden=!trips.length;if(!months.includes(calendarMonth))calendarMonth=months.at(-1)||'';if(selectedDay&&selectedDay!=='unknown'&&!days.has(selectedDay))selectedDay='';$('calendarSelection').textContent=selectedDay==='unknown'?'无日期行程':selectedDay||'全部日期';$('calendarMonth').innerHTML=months.map(m=>`<option value="${m}" ${m===calendarMonth?'selected':''}>${m.slice(0,4)} 年 ${Number(m.slice(5))} 月</option>`).join('');$('calendarMonth').disabled=!months.length;const index=months.indexOf(calendarMonth);$('calendarPrev').disabled=index<=0;$('calendarNext').disabled=index<0||index===months.length-1;$('calendarUnknown').disabled=!unknown;$('calendarUnknown').textContent='无日期行程 ('+unknown+')';$('run').textContent='生成全部';if(!calendarMonth){$('calendarDays').innerHTML='<p class="calendar-empty">暂无可识别的行程日期</p>';return}const [y,m]=calendarMonth.split('-').map(Number),first=(new Date(Date.UTC(y,m-1,1)).getUTCDay()+6)%7,last=new Date(Date.UTC(y,m,0)).getUTCDate();let html='<span></span>'.repeat(first);for(let d=1;d<=last;d++){const day=calendarMonth+'-'+String(d).padStart(2,'0'),count=days.get(day)||0;html+=`<button data-day="${day}" ${count?'':'disabled'} aria-label="${day}，${count} 条行程" aria-pressed="${selectedDay===day}" class="${selectedDay===day?'active':''}">${d}${count?'<i></i>':''}</button>`}$('calendarDays').innerHTML=html}
 $('calendarDays').onclick=e=>{const day=e.target.closest('[data-day]')?.dataset.day;if(!day||!TripCalendar.days(trips).has(day))return;selectedDay=day;render();fit()};
 $('calendarMonth').onchange=()=>{calendarMonth=$('calendarMonth').value;renderCalendar()};
 function stepMonth(delta){const months=[...new Set([...TripCalendar.days(trips).keys()].sort().map(d=>d.slice(0,7)))],i=months.indexOf(calendarMonth);if(months[i+delta])calendarMonth=months[i+delta];renderCalendar()}
@@ -424,10 +498,10 @@ $('selectAll').onclick=()=>{trips.forEach(t=>t.selected=true);render()};
 $('selectNone').onclick=()=>{trips.forEach(t=>t.selected=false);render()};
 const headers=['日期','出发地','到达地','班次','承运','席位','出发时间','到达时间','价格','型号','里程','腐败率','到达日期','途经站'];
 $('template').onclick=()=>{if(!window.XLSX)return tell('表格组件未加载，请检查网络后刷新');let w=XLSX.utils.book_new();XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([headers]),'行程');XLSX.writeFile(w,'行迹-空白行程模板.xlsx')};
-$('help').onclick=()=>modal('<h2>导入格式说明</h2><p>按列名识别，不依赖列顺序。中国国铁必填：出发日期、车次、出发地、到达地；航空必填：起终机场三字码、航班号；日本铁路必填：日期和精确起终站名，无需车次。支持「出发日期／日期」「车次／航班号／班次」列名。扫描工作表前 100 行寻找表头，读取之后的全部有效记录。</p><pre>'+headers.join(' / ')+'</pre><p>车站使用精确站名；飞行起终点使用 IATA 三字码。三个英文字母的起终点会识别为飞行，也可在行程详情修正。年份从日期单元格或 Sheet 名识别；铁路必须能识别完整出发日期。航空日期可空，归入日历的「无日期行程」。腐败率表示每公里单价。支持中文、日文站名，以及可选「途经站」列（用 ; 分隔）。年度 Sheet（如 2019—2026 各一个 Sheet）中的 5.5 识别为该年 5 月 5 日；完整日期优先使用自身年份。按日期及出发时间倒序，未知日期排最后。若 5.10 在 Excel 中存为数值 5.1，无法还原 10 日，请使用文本或日期单元格。</p><p>日历无行程日期置灰；选择日期同时筛选列表、地图及生成范围，全部日期恢复。跨日优先读取可选「到达日期」，其次「到达时间」中的次日/+1/+2 标记，再参考历史停站表。仅有时刻且到达早于出发时推定次日；跨时区航班请填写到达日期。筛选不会删除轨迹或改变勾选状态。</p><p>地图点击显示详情卡片；所有航班可点选，铁路同一对精确站名的去返程合计不超过 6 次可点选（一次往返计 2 次）。次数按当前导入的全部记录统计，不随筛选变化。超过 6 次仍显示轨迹，可从左侧列表查看。多 Sheet 可选择单个或全部；不会自动去重。空白行跳过，缺少起终点的记录保留并提示。公式读取文件中的缓存值，错误单元格视为空；本应用不执行公式。</p><p>中国铁路优先按日期和车次读取 RailLog 历史停站快照，截取起终站区间并约束 OSM 分段寻路；快照并非当日实际开行记录。路路通查询结果可经人工核对后填入途经站。没有可用时刻表时明确标记为 OSM 网络推算；有歧义的同名站结合承运方与起终站自动匹配。网络断开时不绘制直线替代。跨区域长线路可添加途经站分段查询。</p><p>地图：OSM / OpenFreeMap；地形阴影：Mapzen DEM。只显示城市、主要公路、铁路、水系和地形。表格在浏览器内处理；机场坐标从本站坐标库读取；默认将站名发送至 OpenRailwayMap 站点索引、车站坐标发送至 BRouter 的铁路模式；仅选择备用 Overpass 模式时发送铁路查询范围至 Overpass；启用历史时刻表时，车次号和快照版本发送至 RailLog。刷新后数据不保留，可导出 GeoJSON。</p>');
+$('help').onclick=()=>modal('<h2>导入格式说明</h2><p>按列名识别，不依赖列顺序。中国国铁必填：出发日期、车次、出发地、到达地；航空必填：起终机场三字码、航班号；日本铁路必填：日期和精确起终站名，无需车次。支持「出发日期／日期」「车次／航班号／班次」列名。扫描工作表前 100 行寻找表头，读取之后的全部有效记录。</p><pre>'+headers.join(' / ')+'</pre><p>车站使用精确站名；飞行起终点使用 IATA 三字码。三个英文字母的起终点会识别为飞行，也可在行程详情修正。年份从日期单元格或 Sheet 名识别；铁路必须能识别完整出发日期。航空日期可空，归入日历的「无日期行程」。腐败率表示每公里单价。支持中文、日文站名，以及可选「途经站」列（用 ; 分隔）。年度 Sheet（如 2019—2026 各一个 Sheet）中的 5.5 识别为该年 5 月 5 日；完整日期优先使用自身年份。按日期及出发时间倒序，未知日期排最后。若 5.10 在 Excel 中存为数值 5.1，无法还原 10 日，请使用文本或日期单元格。</p><p>日历无行程日期置灰；选择日期同时筛选列表和地图；生成按钮作用于所有已导入年份，全部日期恢复。跨日优先读取可选「到达日期」，其次「到达时间」中的次日/+1/+2 标记，再参考历史停站表。仅有时刻且到达早于出发时推定次日；跨时区航班请填写到达日期。筛选不会删除轨迹或改变勾选状态。</p><p>地图点击显示详情卡片；所有航班可点选，铁路同一对精确站名的去返程合计不超过 6 次可点选（一次往返计 2 次）。次数按当前导入的全部记录统计，不随筛选变化。超过 6 次仍显示轨迹，可从左侧列表查看。多 Sheet 可选择单个或全部；不会自动去重。空白行跳过，缺少起终点的记录保留并提示。公式读取文件中的缓存值，错误单元格视为空；本应用不执行公式。</p><p>中国铁路优先按日期和车次读取 RailLog 历史停站快照，截取起终站区间并约束 OSM 分段寻路；快照并非当日实际开行记录。路路通查询结果可经人工核对后填入途经站。没有可用时刻表时明确标记为 OSM 网络推算；有歧义的同名站结合承运方与起终站自动匹配。网络断开时不绘制直线替代。跨区域长线路可添加途经站分段查询。</p><p>地图：OSM / OpenFreeMap；地形阴影：Mapzen DEM。只显示城市、主要公路、铁路、水系和地形。表格在浏览器内处理；机场坐标从本站坐标库读取；默认将站名发送至 OpenRailwayMap 站点索引、车站坐标发送至 BRouter 的铁路模式；仅选择备用 Overpass 模式时发送铁路查询范围至 Overpass；启用历史时刻表时，车次号和快照版本发送至 RailLog。刷新后数据不保留，可导出 GeoJSON。</p>');
 async function openFile(file){if(!file||busy)return;if(!/\.xlsx?$/i.test(file.name))return tell('请选择 .xlsx 或 .xls 文件');try{if(!window.XLSX)throw Error('表格组件未加载，请检查网络');book=XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:false,cellNF:true});$('sheet').innerHTML='<option value="">请选择工作表…</option>'+(book.SheetNames.length>1?'<option value="*">全部 Sheet</option><option value="+">选择多个 Sheet…</option>':'')+book.SheetNames.map((s,i)=>`<option value="${i}">${esc(s)}</option>`).join('');$('sheetBox').hidden=false;if(book.SheetNames.length===1){$('sheet').value='0';parseSheets()}else{modal('<h2>选择要生成的工作表</h2><p>检测到 '+book.SheetNames.length+' 个 Sheet。可读取其中一个，或合并全部 Sheet 的行程。</p><select id="choose">'+$('sheet').innerHTML+'</select><p id="choiceError"></p><button class="primary" id="confirmSheet">读取所选数据</button>');$('confirmSheet').onclick=()=>{if(!$('choose').value){$('choiceError').textContent='请先选择一个 Sheet 或全部 Sheet';return}$('sheet').value=$('choose').value;$('dialog').close();if($('sheet').value==='+')chooseMultipleSheets();else parseSheets()}}}catch(e){tell('读取失败：'+e.message)}}
 $('file').onchange=e=>{openFile(e.target.files[0]);e.target.value=''};$('drop').ondragover=e=>e.preventDefault();$('drop').ondrop=e=>{e.preventDefault();openFile(e.dataTransfer.files[0])};$('sheet').onchange=()=>{$('sheet').value==='+'?chooseMultipleSheets():parseSheets()};
-function parseSheets(){if(busy||!book||!$('sheet').value)return;const names=$('sheet').value==='*'?book.SheetNames:$('sheet').value==='+'?book._selectedSheets:[book.SheetNames[Number($('sheet').value)]],notes=[];trips=[];selectedDay='';calendarMonth='';for(const name of names){let ws=book.Sheets[name],range=ws['!ref']?XLSX.utils.decode_range(ws['!ref']):null;if(!range){notes.push(name+'：空表');continue}let rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:'',blankrows:true}),hi=rows.slice(0,100).findIndex(r=>r.map(x=>String(x).trim()).includes('出发地')&&r.map(x=>String(x).trim()).includes('到达地'));if(hi<0){notes.push(name+'：未找到出发地/到达地表头');continue}let keys=rows[hi].map(x=>String(x).trim());for(let i=hi+1;i<rows.length;i++){let row=rows[i];if(String(row[keys.indexOf('出发地')]||'').trim()==='出发地'&&String(row[keys.indexOf('到达地')]||'').trim()==='到达地')continue;if(!row.some(x=>String(x).trim()))continue;let raw={};keys.forEach((k,j)=>{if(k)raw[k]=String(row[j]??'').trim().replace(/^#(DIV\/0!|VALUE!|N\/A|REF!|NAME\?|NUM!|NULL!)$/,'')});if(keys.every(k=>!raw[k]))continue;TripCalendar.normalize(raw);let from=raw['出发地']||'',to=raw['到达地']||'';const dateCol=keys.includes('出发日期')?keys.indexOf('出发日期'):keys.indexOf('日期');const dc=dateCol<0?null:ws[XLSX.utils.encode_cell({r:range.s.r+i,c:range.s.c+dateCol})];const time=TripData.date(raw,name,dc?{...dc,dateFormatted:XLSX.SSF.is_date(dc.z||'')}:null,!!book.Workbook?.WBProps?.date1904);trips.push({id:trips.length,selected:true,time,raw,from,to,sheet:name,row:range.s.r+i+1,mode:TripCalendar.mode(raw,from,to),via:raw['途经站']||'',error:''});const t=trips.at(-1),arrivalCol=keys.indexOf('到达日期');if(arrivalCol>=0){const ac=ws[XLSX.utils.encode_cell({r:range.s.r+i,c:range.s.c+arrivalCol})];if(ac)t.arrivalCell={...ac,dateFormatted:XLSX.SSF.is_date(ac.z||'')}}t.date1904=!!book.Workbook?.WBProps?.date1904;t.error=TripCalendar.validate(t).join('；')}}render();tell('已读取 '+names.length+' 个 Sheet，共 '+trips.length+' 条记录'+(notes.length?'；'+notes.join('；'):''));if(notes.length)modal('<h2>工作表读取结果</h2><p>已导入 '+trips.length+' 条行程。</p><pre>'+esc(notes.join('\n'))+'</pre>')}
+function parseSheets(){if(busy||!book||!$('sheet').value)return;const names=$('sheet').value==='*'?book.SheetNames:$('sheet').value==='+'?book._selectedSheets:[book.SheetNames[Number($('sheet').value)]],notes=[];trips=[];failedFirst=false;selectedDay='';calendarMonth='';for(const name of names){let ws=book.Sheets[name],range=ws['!ref']?XLSX.utils.decode_range(ws['!ref']):null;if(!range){notes.push(name+'：空表');continue}let rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:'',blankrows:true}),hi=rows.slice(0,100).findIndex(r=>r.map(x=>String(x).trim()).includes('出发地')&&r.map(x=>String(x).trim()).includes('到达地'));if(hi<0){notes.push(name+'：未找到出发地/到达地表头');continue}let keys=rows[hi].map(x=>String(x).trim());for(let i=hi+1;i<rows.length;i++){let row=rows[i];if(String(row[keys.indexOf('出发地')]||'').trim()==='出发地'&&String(row[keys.indexOf('到达地')]||'').trim()==='到达地')continue;if(!row.some(x=>String(x).trim()))continue;let raw={};keys.forEach((k,j)=>{if(k)raw[k]=String(row[j]??'').trim().replace(/^#(DIV\/0!|VALUE!|N\/A|REF!|NAME\?|NUM!|NULL!)$/,'')});if(keys.every(k=>!raw[k]))continue;TripCalendar.normalize(raw);let from=raw['出发地']||'',to=raw['到达地']||'';const dateCol=keys.includes('出发日期')?keys.indexOf('出发日期'):keys.indexOf('日期');const dc=dateCol<0?null:ws[XLSX.utils.encode_cell({r:range.s.r+i,c:range.s.c+dateCol})];const time=TripData.date(raw,name,dc?{...dc,dateFormatted:XLSX.SSF.is_date(dc.z||'')}:null,!!book.Workbook?.WBProps?.date1904);trips.push({id:trips.length,selected:true,time,raw,from,to,sheet:name,row:range.s.r+i+1,mode:TripCalendar.mode(raw,from,to),via:raw['途经站']||'',error:''});const t=trips.at(-1),arrivalCol=keys.indexOf('到达日期');if(arrivalCol>=0){const ac=ws[XLSX.utils.encode_cell({r:range.s.r+i,c:range.s.c+arrivalCol})];if(ac)t.arrivalCell={...ac,dateFormatted:XLSX.SSF.is_date(ac.z||'')}}t.date1904=!!book.Workbook?.WBProps?.date1904;t.error=TripCalendar.validate(t).join('；')}}render();tell('已读取 '+names.length+' 个 Sheet，共 '+trips.length+' 条记录'+(notes.length?'；'+notes.join('；'):''));if(notes.length)modal('<h2>工作表读取结果</h2><p>已导入 '+trips.length+' 条行程。</p><pre>'+esc(notes.join('\n'))+'</pre>')}
 async function overpass(q){if(cancel)throw Error('已停止');return Services.overpass(q,controller?.signal,message=>tell(message))}
 function normalize(s){return s.trim().replace(/(站|駅)$/,'')}
 async function locateManyOverpass(names,trip){
@@ -445,11 +519,11 @@ async function locate(name,mode,trip){return (await locateMany([name],trip||{mod
 async function railNetwork(points,trip){const lat=points.map(p=>p[0]),lon=points.map(p=>p[1]),d=Math.max(...points.map(p=>Core.km(points[0],p)));if(d>900)throw Error('单段超过 900 km，请添加途经站分段查询');const margin=Math.max(.02,Math.min(1,d/600)),box=[Math.max(-85,Math.min(...lat)-margin),Math.max(-180,Math.min(...lon)-margin),Math.min(85,Math.max(...lat)+margin),Math.min(180,Math.max(...lon)+margin)],kinds=StationMatch.context(trip||{}).operator?'rail':'rail|light_rail|subway|monorail|tram|narrow_gauge';return overpass('way["railway"~"^('+kinds+')$"]["service"!~"^(yard|siding|spur)$"]('+box.join(',')+');out geom;')}
 async function railway(a,b,exactStart=false,startNodeId=null,trip=null,network=null){return Core.route(network||await railNetwork([a,b],trip),a,b,{exactStart,startNodeId})}
 
-async function generate(t){delete t.path;const invalid=TripCalendar.validate(t);if(invalid.length)throw Error(invalid.join('；'));delete t._lastPoint;t.error='';t.candidates=null;delete t.path;if(!t.from||!t.to)throw Error('缺少出发地或到达地');if(t.from===t.to&&!t.via.trim())throw Error('起终点相同，请提供环线途经站；航空起终机场不能相同');let names=[t.from,...(t.mode==='rail'?t.via.split(/[;；]/).map(s=>s.trim()).filter(Boolean):[]),t.to];t.routingNote='';t.timetable=null;t.routeBasis='OSM 网络推算';if(t.mode==='rail'){if(t.via.trim())t.routeBasis='人工途经站约束 + OSM';else if($('routing').value==='timetable'&&TripCalendar.kind(t)==='china'){try{tell('查询历史停站：'+(t.raw['班次']||'未填车次'));t.timetable=await Timetable.lookup(t,{signal:controller?.signal});names=t.timetable.names;t.routeBasis='历史停站约束 + OSM（参考）'}catch(e){t.routingNote='未使用时刻表：'+e.message}finally{}}if(cancel)throw Error('已停止')}const routeKey='route:v6:'+($('routing').value==='overpass'?'overpass:':'brouter:')+JSON.stringify({names,operator:StationMatch.context(t).label,overrides:t.overrides||{},version:t.timetable?.version||'',train:t.timetable?.train||''});if(t.mode==='rail'){const saved=await Services.read(routeKey,30*86400000);if(saved){t.path=saved.path;t.nodeIds=saved.nodeIds;t.routeBasis=saved.routeBasis||t.routeBasis;t.status='已生成 · 复用缓存铁路轨迹';return}}const points=await locateMany(names,t);if(t.mode==='air'){if(Core.km(points[0],points.at(-1))<.001)throw Error('出发与到达机场坐标相同，无法生成航线');t.path=Core.ellipse(points[0],points.at(-1))}else if($('routing').value!=='overpass'){t.path=await RailService.route(points,controller?.signal,tell,t);delete t.nodeIds;t.routeBasis+=' · BRouter';await Services.write(routeKey,{path:t.path,routeBasis:t.routeBasis})}else{let full=[],nodeIds=[];const shared=points.length>2&&Math.max(...points.map(p=>Core.km(points[0],p)))<100?await railNetwork(points,t):null;for(let i=1;i<points.length;i++){let leg=await railway(i===1?points[0]:full.at(-1),points[i],i>1,nodeIds.at(-1),t,shared);if(i>1&&leg.nodeIds?.[0]!==nodeIds.at(-1))throw Error('途经站轨道节点不连续，无法生成完整线路');full.push(...(i===1?leg:leg.slice(1)));nodeIds.push(...(i===1?leg.nodeIds:leg.nodeIds.slice(1)))}if(full.length<2)throw Error('无法得到有效轨迹，请核对起终站或途经站');t.path=full;t.nodeIds=nodeIds;await Services.write(routeKey,{path:full,nodeIds})}t.status=t.mode==='air'?'已生成 · 机场间椭圆弧线':'已拟合 · '+t.routeBasis;}
+async function generate(t){delete t.path;const invalid=TripCalendar.validate(t);if(invalid.length)throw Error(invalid.join('；'));delete t._lastPoint;t.error='';t.candidates=null;delete t.path;if(!t.from||!t.to)throw Error('缺少出发地或到达地');if(t.from===t.to&&!t.via.trim())throw Error('起终点相同，请提供环线途经站；航空起终机场不能相同');let names=[t.from,...(t.mode==='rail'?t.via.split(/[;；]/).map(s=>s.trim()).filter(Boolean):[]),t.to];t.routingNote='';t.timetable=null;t.routeBasis='OSM 网络推算';if(t.mode==='rail'){if(t.via.trim())t.routeBasis='人工途经站约束 + OSM';else if($('routing').value==='timetable'&&TripCalendar.kind(t)==='china'){try{tell('查询历史停站：'+(t.raw['班次']||'未填车次'));t.timetable=await Timetable.lookup(t,{signal:controller?.signal});names=t.timetable.names;t.routeBasis='历史停站约束 + OSM（参考）'}catch(e){t.routingNote='未使用时刻表：'+e.message}finally{}}if(cancel)throw Error('已停止')}const routeKey='route:v7:'+($('routing').value==='overpass'?'overpass:':'brouter:')+JSON.stringify({names,operator:StationMatch.context(t).label,overrides:t.overrides||{},version:t.timetable?.version||'',train:t.timetable?.train||''});if(t.mode==='rail'){const saved=await Services.read(routeKey,30*86400000);if(saved){t.path=saved.path;t.nodeIds=saved.nodeIds;t.routeBasis=saved.routeBasis||t.routeBasis;t.status='已生成 · 复用缓存铁路轨迹';return}}const points=await locateMany(names,t);if(t.mode==='air'){if(Core.km(points[0],points.at(-1))<.001)throw Error('出发与到达机场坐标相同，无法生成航线');t.path=Core.ellipse(points[0],points.at(-1))}else if($('routing').value!=='overpass'){t.path=await RailService.route(points,controller?.signal,tell,t);delete t.nodeIds;t.routeBasis+=' · BRouter';await Services.write(routeKey,{path:t.path,routeBasis:t.routeBasis})}else{let full=[],nodeIds=[];const shared=points.length>2&&Math.max(...points.map(p=>Core.km(points[0],p)))<100?await railNetwork(points,t):null;for(let i=1;i<points.length;i++){let leg=await railway(i===1?points[0]:full.at(-1),points[i],i>1,nodeIds.at(-1),t,shared);if(i>1&&leg.nodeIds?.[0]!==nodeIds.at(-1))throw Error('途经站轨道节点不连续，无法生成完整线路');full.push(...(i===1?leg:leg.slice(1)));nodeIds.push(...(i===1?leg.nodeIds:leg.nodeIds.slice(1)))}if(full.length<2)throw Error('无法得到有效轨迹，请核对起终站或途经站');t.path=full;t.nodeIds=nodeIds;await Services.write(routeKey,{path:full,nodeIds})}t.status=t.mode==='air'?'已生成 · 机场间椭圆弧线':'已拟合 · '+t.routeBasis;}
 async function run(targets){
  if(busy)return;busy=true;cancel=false;controller=new AbortController();$('stop').hidden=false;for(const id of ['file','sheet','routing'])$(id).disabled=true;
  try{render();let painted=Date.now();const update=()=>{if(Date.now()-painted>150){render();painted=Date.now()}};let i=0;for(const t of [...targets].sort((a,b)=>(a.mode==='air'?0:1)-(b.mode==='air'?0:1))){if(cancel)break;t.status='正在匹配…';tell('正在生成 '+(++i)+' / '+targets.length+' · '+t.from+' → '+t.to);update();try{await generate(t)}catch(e){t.error=cancel?'已停止':e.message;if(e.candidates)t.candidates={name:e.station,items:e.candidates}}update();if(!cancel)await new Promise(r=>setTimeout(r,0))}}
- finally{busy=false;$('stop').hidden=true;for(const id of ['file','sheet','routing'])$(id).disabled=false;render();fit();tell((cancel?'已停止；':'处理完成；')+trips.filter(t=>t.path).length+' 条已生成，'+trips.filter(t=>t.error).length+' 条待处理。点击记录可修正。')}
+ finally{busy=false;failedFirst=true;$('stop').hidden=true;for(const id of ['file','sheet','routing'])$(id).disabled=false;render();$('list').scrollTop=0;$('list').scrollIntoView?.({block:'nearest'});fit();tell((cancel?'已停止；':'处理完成；')+trips.filter(t=>t.path).length+' 条已生成，'+trips.filter(t=>t.error).length+' 条待处理。点击记录可修正。')}
 }
 function runScope(scope){if(busy)return;const targets=trips.filter(t=>scope==='all'||scope==='selected'&&t.selected!==false||t.mode===scope);if(!targets.length)return tell('该范围内没有行程');targets.forEach(t=>t.selected=true);render();const pending=targets.filter(t=>!t.path);if(!pending.length){fit();return tell('所选行程已有轨迹，已显示；取消勾选可隐藏')}return run(pending)}
 $('run').onclick=()=>runScope('all');$('runSelected').onclick=()=>runScope('selected');$('runRail').onclick=()=>runScope('rail');$('runAir').onclick=()=>runScope('air');$('stop').onclick=()=>{cancel=true;controller?.abort()};

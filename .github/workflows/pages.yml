@@ -40,6 +40,8 @@ jobs:
           node tests/timetable-cache.cjs
           node tests/batched-routing.cjs
           node tests/bundle.cjs
+          node tests/automatic-repair.cjs
+          node tests/station-cache.cjs
           node tests/routing-quality.cjs
           node tests/rail-service.cjs
           node tests/calendar.cjs

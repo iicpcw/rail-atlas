@@ -1,8 +1,9 @@
 // Same-origin, immutable public timetable snapshots. Never use future data for a past trip.
 const TimetableCache=(()=>{
+const remote=typeof location!=='undefined'&&location.hostname==='iicpcw.github.io'?'https://raw.githubusercontent.com/iicpcw/rail-atlas-data/main/':'';
 let catalog;const books=new Map(),pending=new Map();
 async function index(signal){
- if(!catalog){const value=await Services.json('data/timetables/index.json',{signal,timeout:5000});if(value.schema!==1||!Array.isArray(value.snapshots))throw Error('时刻表缓存索引无效');let history={snapshots:[]};try{history=await Services.json('data/timetable-history/index.json',{signal,timeout:5000});if(history.schema!==1||!Array.isArray(history.snapshots))history={snapshots:[]}}catch(e){if(signal?.aborted)throw e}catalog={...value,bulkCount:value.snapshots.length,historyRecords:history.snapshots.reduce((n,s)=>n+s.schedules,0),snapshots:[...value.snapshots,...history.snapshots]}}
+ if(!catalog){let origin=remote,value;try{value=await Services.json(origin+'data/timetables/index.json',{signal,timeout:5000})}catch(e){if(signal?.aborted)throw e;origin='';value=await Services.json('data/timetables/index.json',{signal,timeout:5000})}if(value.schema!==1||!Array.isArray(value.snapshots))throw Error('时刻表缓存索引无效');let history={snapshots:[]};try{history=await Services.json(origin+'data/timetable-history/index.json',{signal,timeout:5000});if(history.schema!==1||!Array.isArray(history.snapshots))history={snapshots:[]}}catch(e){if(signal?.aborted)throw e}catalog={...value,bulkCount:value.snapshots.length,historyRecords:history.snapshots.reduce((n,s)=>n+s.schedules,0),snapshots:[...value.snapshots.map(s=>({...s,origin})),...history.snapshots.map(s=>({...s,origin}))]}}
  return catalog;
 }
 async function book(item,signal){
@@ -14,7 +15,7 @@ async function book(item,signal){
   signal?.addEventListener('abort',abort,{once:true});
   try{
    if(!/^[a-f0-9]{64}\.json\.gz$/.test(item.file))throw Error('时刻表文件名无效');
-   const base=item.base==='data/timetable-history/'?item.base:'data/timetables/';const r=await fetch(base+item.file,{signal:controller.signal});if(!r.ok)throw Error('本站时刻表 HTTP '+r.status);
+   const base=item.base==='data/timetable-history/'?item.base:'data/timetables/';const r=await fetch((item.origin===remote?remote:'')+base+item.file,{signal:controller.signal});if(!r.ok)throw Error('本站时刻表 HTTP '+r.status);
    const bytes=await r.arrayBuffer(),stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
    const data=await new Response(stream).arrayBuffer();
    const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),v=>v.toString(16).padStart(2,'0')).join('');

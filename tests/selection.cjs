@@ -14,3 +14,6 @@ get('calendarDays').onclick({target:{closest:()=>({dataset:{day:'2027-01-03'}})}
 get('calendarAll').onclick();assert.equal(vm.runInContext('visible().length',ctx),3);assert.equal(vm.runInContext('collection().features.length',ctx),2);assert.equal(vm.runInContext('trips[2].selected',ctx),false);
 get('calendarUnknown').onclick();assert.equal(vm.runInContext('visible()[0].id',ctx),3);get('runAir').onclick();assert.equal(vm.runInContext('collection().features.length',ctx),1);
 console.log('PASS: disabled dates, cross-day list/map filtering, undated flights and selection/path retention');
+
+vm.runInContext("selectedDay='';failedFirst=true;trips[0].error='failed';delete trips[0].path;",ctx);assert.equal(vm.runInContext('visible()[0].id',ctx),1);
+console.log('PASS: failed older journeys precede newer successful journeys');
