@@ -2,6 +2,19 @@ Airports: OurAirports, public domain. https://ourairports.com/data/
 Downloaded 2026-11-26; includes IATA coordinates of non-closed airports.
 Timetable version index: https://api.raillog.top/api/train-timetables/versions
 RailLog snapshots are reference data, not a guarantee of actual historical service.
+
+Bulk timetable cache (all published files from these two sources at collection time):
+1. wj0575 / RailRhythm12306 — factual train stop/time records from train_data/train_list*.json.
+   https://github.com/wj0575/RailRhythm12306
+   Some source snapshots are incomplete. No source application code is copied.
+2. wensimehrp (Jeremy Gao) / chinese-railway-gtfs — public GTFS release feeds.
+   https://github.com/wensimehrp/chinese-railway-gtfs
+   License: Creative Commons Attribution 4.0 International.
+   https://creativecommons.org/licenses/by/4.0/
+   Changes: stop times converted to compact JSON, train aliases indexed, gzip compressed;
+   synthetic DUMMY_LINE services excluded. OSM-derived geographic shapes are not copied.
+Each snapshot's original download URL, capture date, counts and SHA-256 are in timetables/index.json.
+The bulk cache does not currently cover 2019–2024. RailLog on-demand browser caching remains separate.
 Rail geometry and station queries: OpenStreetMap contributors, ODbL 1.0. https://www.openstreetmap.org/copyright
 
 Station index: OpenRailwayMap API, OSM data ODbL. https://api.openrailwaymap.org/v2/facility

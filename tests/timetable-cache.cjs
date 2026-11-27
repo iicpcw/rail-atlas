@@ -1,0 +1,28 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),zlib=require('node:zlib'),crypto=require('node:crypto');
+const TT=require('../dist/timetable.js'),TC=require('../dist/timetable-cache.js');
+const record={id:'G7402',codes:['G7402','G7403'],stops:[['A','08:00','08:01',0],['B','09:00','09:02',0],['C','10:00','10:01',0],['B','11:00','11:01',0],['D','12:00','12:00',0]]};
+const data={schema:1,records:[record],index:{G7402:[0],G7403:[0]}};
+const trip={from:'A',to:'D',time:{label:'2025-02-23',departure:'08:01'}};
+assert.deepEqual(TC.select(data,'G7403',trip,TT.section).stops.map(s=>s.station_name),['A','B','C','B','D'],'keep reversal / repeated station');
+assert.equal(TC.select(data,'G9999',trip,TT.section),null);
+assert.equal(TC.select(data,'G7402',{...trip,from:'D',to:'A'},TT.section),null,'do not reverse train direction');
+const variant={...record,id:'variant',stops:record.stops.map(s=>[...s])};variant.stops[0][2]='09:01';
+const multi={...data,records:[record,variant],index:{G7402:[0,1]}};
+assert.throws(()=>TC.select(multi,'G7402',{...trip,time:{label:'2025-02-23'}},TT.section),/多个不同/);
+assert.equal(TC.select(multi,'G7402',trip,TT.section).record.id,'G7402');
+const raw=Buffer.from(JSON.stringify(data)),hash=crypto.createHash('sha256').update(raw).digest('hex'),file=hash+'.json.gz';
+let fetches=0;
+const context={module:{exports:{}},Services:{json:async()=>({schema:1,snapshots:[{date:'2025.02.23',id:'fixture',file,sha256:hash,source:'fixture'}]})},fetch:async()=>{fetches++;return new Response(zlib.gzipSync(raw))},Response,Blob,DecompressionStream,TextDecoder,Uint8Array,crypto:crypto.webcrypto,AbortController,setTimeout,clearTimeout};
+vm.runInNewContext(fs.readFileSync(__dirname+'/../dist/timetable-cache.js','utf8'),context);
+(async()=>{
+ const api=context.module.exports;
+ assert.equal(await api.lookup({...trip,time:{label:'2019-02-23'}},'G7402',TT.section),null,'never future snapshot');
+ assert.equal(await api.lookup({...trip,time:{...trip.time,label:'2025-02-25'}},'G7402',TT.section,{knownVersions:['2025.02.24']}),null,'do not mask a newer known timetable with an old snapshot');
+ const hit=await api.lookup(trip,'G7402',TT.section,{knownVersions:['2025.01.01']});
+ assert.equal(hit.version,'2025.02.23');assert.equal(hit.names.join(','),'A,B,C,B,D');assert.equal(fetches,1);
+ await api.lookup(trip,'G7403',TT.section);assert.equal(fetches,1,'reuse downloaded book');
+ const c={...context,module:{exports:{}},Services:{json:async()=>({schema:1,snapshots:[{date:'2025.02.23',id:'corrupt',file,sha256:'0'.repeat(64)}]})}};
+ vm.runInNewContext(fs.readFileSync(__dirname+'/../dist/timetable-cache.js','utf8'),c);
+ await assert.rejects(c.module.exports.lookup(trip,'G7402',TT.section),/校验失败/);
+ console.log('PASS: cached timetables preserve reversals, train aliases, ambiguity, snapshot dates, gzip integrity and reuse');
+})().catch(e=>{console.error(e);process.exitCode=1});

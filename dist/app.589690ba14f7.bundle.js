@@ -143,15 +143,74 @@ const node=document.createElement('div');node.className='route-cards';node.inner
 }
 
 ;
+// timetable-cache.js
+// Same-origin, immutable public timetable snapshots. Never use future data for a past trip.
+const TimetableCache=(()=>{
+let catalog;const books=new Map(),pending=new Map();
+async function index(signal){
+ if(!catalog){const value=await Services.json('data/timetables/index.json',{signal,timeout:5000});if(value.schema!==1||!Array.isArray(value.snapshots))throw Error('时刻表缓存索引无效');catalog=value}
+ return catalog;
+}
+async function book(item,signal){
+ if(books.has(item.file))return books.get(item.file);
+ if(pending.has(item.file))return pending.get(item.file);
+ const job=(async()=>{
+  const controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(abort,20000);
+  if(signal?.aborted){clearTimeout(timer);throw Error('已停止')}
+  signal?.addEventListener('abort',abort,{once:true});
+  try{
+   if(!/^[a-f0-9]{64}\.json\.gz$/.test(item.file))throw Error('时刻表文件名无效');
+   const r=await fetch('data/timetables/'+item.file,{signal:controller.signal});if(!r.ok)throw Error('本站时刻表 HTTP '+r.status);
+   const bytes=await r.arrayBuffer(),stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+   const data=await new Response(stream).arrayBuffer();
+   const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),v=>v.toString(16).padStart(2,'0')).join('');
+   if(digest!==item.sha256)throw Error('时刻表缓存校验失败');
+   const value=JSON.parse(new TextDecoder().decode(data));if(value.schema!==1||!value.index||!Array.isArray(value.records))throw Error('时刻表数据无效');
+   books.set(item.file,value);if(books.size>3)books.delete(books.keys().next().value);return value;
+  }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort)}
+ })();pending.set(item.file,job);try{return await job}finally{pending.delete(item.file)}
+}
+function select(data,train,trip,section){
+ const keys=train.split('/'),ids=[...new Set([train,...keys].flatMap(k=>data.index[k]||[]))];
+ const day=trip.time.label.replaceAll('-','');const matches=[];
+ for(const id of ids){
+  const record=data.records[id];if(!record)continue;
+  const stops=record.stops.map((s,i)=>({station_name:s[0],arrive_time:s[1],start_time:s[2],arrive_day_diff:s[3],start_day_diff:s[4]??s[3],station_no:i+1,anomaly:s[5]||false}));
+  try{const selected=section(stops,trip.from,trip.to,trip.time.departure);matches.push({record,stops:selected,exactDate:record.dates?.includes(day)||false})}catch{}
+ }
+ let found=matches.some(m=>m.exactDate)?matches.filter(m=>m.exactDate):matches;
+ if(found.length>1&&trip.time.departure){const timed=found.filter(m=>m.stops[0].start_time===trip.time.departure);if(timed.length)found=timed}
+ const unique=new Map(found.map(m=>[JSON.stringify(m.stops),m]));
+ if(unique.size>1)throw Error('缓存包含多个不同停站方案，请核对出发时间或途经站');
+ return unique.values().next().value||null;
+}
+async function lookup(trip,train,section,{signal,knownVersions=[]}={}){
+ const meta=await index(signal),day=trip.time.label.replaceAll('-','.');
+ const available=meta.snapshots.filter(s=>s.date<=day).sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id));
+ if(!available.length)return null;
+ // A newer known snapshot must not silently be replaced by an older cached one.
+ const newest=knownVersions.filter(v=>v<=day).sort().at(-1);
+ if(newest&&newest>available[0].date)return null;
+ const date=available[0].date;
+ for(const item of available.filter(s=>s.date===date)){
+  const data=await book(item,signal),hit=select(data,train,trip,section);
+  if(hit)return {version:item.date,train:hit.record.codes.join('/'),stops:hit.stops,names:hit.stops.map(s=>s.station_name),source:item.source+' · GitHub 缓存 '+item.date+'（快照参考，不保证当日开行）'};
+ }
+ return null;
+}
+return{index,lookup,select};})();
+if(typeof module!=='undefined')module.exports=TimetableCache;
+
+;
 // timetable.js
 // RailLog public snapshot API. A snapshot is never asserted to be the train's actual running day.
 const Timetable=(()=>{
-const cache=new Map();
+const cache=new Map();let knownVersions;
 function versionFor(versions,day){return versions.filter(v=>/^\d{4}\.\d{2}\.\d{2}$/.test(v)&&v.replaceAll('.','-')<=day).sort().at(-1)||null}
 function section(stops,from,to,depart){const found=[];for(let i=0;i<stops.length;i++)if(stops[i].station_name===from)for(let j=i+1;j<stops.length;j++)if(stops[j].station_name===to)found.push(stops.slice(i,j+1));if(!found.length)throw Error('快照停站表不包含该方向的起终站');let selected=found;if(found.length>1&&depart)selected=found.filter(s=>s[0].start_time===depart);if(selected.length!==1)throw Error('同一车次有多个符合区间，请核对途经站');if(selected[0].some(s=>s.anomaly))throw Error('历史时刻表存在异常标记，请人工核对');return selected[0]}
 async function get(path,signal){if(signal?.aborted)throw Error('已停止');if(cache.has(path))return cache.get(path);const svc=typeof Services!=='undefined'?Services:null,key='timetable:'+path,age=path.endsWith('/versions')?86400000:Infinity;let hit=svc?await svc.read(key,age):null;if(hit){cache.set(path,hit);return hit}try{let d;if(svc)d=await svc.json('https://api.raillog.top'+path,{signal,timeout:8000});else{const c=new AbortController(),abort=()=>c.abort(),timer=setTimeout(abort,8000);signal?.addEventListener('abort',abort,{once:true});try{const r=await fetch('https://api.raillog.top'+path,{signal:c.signal});if(!r.ok)throw Error('时刻表服务返回 '+r.status);d=await r.json()}finally{clearTimeout(timer);signal?.removeEventListener('abort',abort)}}cache.set(path,d);if(svc)await svc.write(key,d);return d}catch(e){if(signal?.aborted)throw e;if(svc&&path.endsWith('/versions')){const d=await svc.json('data/timetable-versions.json',{signal});cache.set(path,d);return d}throw e}}
 
-async function lookup(t,{signal}={}){if(t.time?.day==null)throw Error('未提供完整日期，将按 OSM 网络生成（不套用当前车次停站）');const train=String(t.raw['班次']||'').trim().toUpperCase();if(!/^[A-Z]?\d+(?:\/[A-Z]?\d+)*$/.test(train))throw Error('未填写可查询的中国铁路车次号');const versions=await get('/api/train-timetables/versions',signal),version=versionFor(versions,t.time.label);if(!version)throw Error('没有不晚于行程日期的时刻表快照');const data=await get('/api/train-timetables?'+new URLSearchParams({trainNumber:train,version}),signal);const stops=section(data.stops||[],t.from,t.to,t.time.departure);return{version,train:data.train_codes||train,stops,names:stops.map(s=>s.station_name),source:'RailLog 历史快照 '+version+'（参考，不保证当日实际开行）'}}
+async function lookup(t,{signal}={}){if(t.time?.day==null)throw Error('未提供完整日期，将按 OSM 网络生成（不套用当前车次停站）');const train=String(t.raw['班次']||'').trim().toUpperCase();if(!/^[A-Z]?\d+(?:\/[A-Z]?\d+)*$/.test(train))throw Error('未填写可查询的中国铁路车次号');if(typeof TimetableCache!=='undefined'){try{const known=knownVersions||(knownVersions=await Services.json('data/timetable-versions.json',{signal,timeout:5000}));const hit=await TimetableCache.lookup(t,train,section,{signal,knownVersions:known});if(hit)return hit}catch(e){if(signal?.aborted)throw e;if(e.message.includes('多个不同停站'))throw e}}const versions=await get('/api/train-timetables/versions',signal),version=versionFor(versions,t.time.label);if(!version)throw Error('没有不晚于行程日期的时刻表快照');const data=await get('/api/train-timetables?'+new URLSearchParams({trainNumber:train,version}),signal);const stops=section(data.stops||[],t.from,t.to,t.time.departure);return{version,train:data.train_codes||train,stops,names:stops.map(s=>s.station_name),source:'RailLog 历史快照 '+version+'（参考，不保证当日实际开行）'}}
 async function archive(trips,{signal,onProgress=()=>{}}={}){const trains=[...new Set(trips.filter(t=>t.mode==='rail').map(t=>String(t.raw['班次']||'').trim().toUpperCase()).filter(n=>/^[A-Z]?\d+(?:\/[A-Z]?\d+)*$/.test(n)))];if(!trains.length)throw Error('没有可缓存的中国铁路车次号');const all=await get('/api/train-timetables/versions',signal),today=new Date().toISOString().slice(0,10).replaceAll('-','.');const years=new Map();for(const v of [...all].sort())if(v>='2019.01.01'&&v<=today)years.set(v.slice(0,4),v);const versions=new Set(years.values());for(const t of trips)if(t.time?.day!=null){const v=versionFor(all,t.time.label);if(v)versions.add(v)}let done=0,ok=0,missing=0,errors=0,total=trains.length*versions.size;for(const train of trains)for(const version of versions){if(signal?.aborted)throw Error('已停止缓存');onProgress({done,total,train,version,ok,missing,errors});try{const data=await get('/api/train-timetables?'+new URLSearchParams({trainNumber:train,version}),signal);if(data.stops?.length)ok++;else missing++}catch(e){if(signal?.aborted)throw e;errors++}done++}return{done,total,ok,missing,errors}}
 return{versionFor,section,lookup,archive};})();
 if(typeof module!=='undefined')module.exports=Timetable;
@@ -220,3 +279,5 @@ $('routing').onchange=()=>{if(busy)return;for(const t of trips)if(t.mode==='rail
 $('clear').onclick=()=>{if(busy)return tell('请先停止正在进行的生成任务');trips=[];selectedDay='';calendarMonth='';book=null;cache.clear();$('sheetBox').hidden=true;render();tell('已清空；可导入新的行程表')};
 
 $('archive').onclick=async()=>{if(busy||!trips.length)return tell('请先导入行程，且等待当前任务完成');busy=true;cancel=false;controller=new AbortController();$('stop').hidden=false;for(const id of ['file','sheet','routing','archive'])$(id).disabled=true;render();try{const r=await Timetable.archive(trips,{signal:controller.signal,onProgress:p=>tell('历史缓存 '+p.done+'/'+p.total+' · '+p.train+' · '+p.version)});tell('历史缓存完成：'+r.ok+' 份有停站表，'+r.missing+' 份无此车次，'+r.errors+' 份查询失败。按年代表快照及行程日期缓存，并非所有日期全量数据。')}catch(e){tell(e.message)}finally{busy=false;$('stop').hidden=true;for(const id of ['file','sheet','routing','archive'])$(id).disabled=false;render()}};
+
+$('cacheInfo').onclick=async()=>{try{const m=await TimetableCache.index(),years=new Map();for(const s of m.snapshots){const y=s.date.slice(0,4),v=years.get(y)||{versions:0,max:0};v.versions++;v.max=Math.max(v.max,s.trains);years.set(y,v)}modal('<h2>本站时刻表缓存</h2><p>已保存 '+m.snapshots.length+' / '+m.discovered+' 个源文件中的全部可用车次，不限于已导入行程。生成时按需读取对应快照。</p><ul>'+[...years].map(([y,v])=>'<li>'+esc(y)+' 年：'+v.versions+' 个快照，单快照最多 '+v.max+' 个车次号（含换号）。</li>').join('')+'</ul><p>尚未取得批量缓存的年份：'+esc((m.missingYears||[]).join('、')||'无')+'。这些年份仍按需查询 RailLog，并缓存在本机；不代表已经保存到 GitHub。</p><p>快照是采集时的停站表，不保证历史某一天实际开行；部分源文件本身可能不完整。不会用晚于行程日期的快照替代。</p><p>来源：<a href="https://github.com/wj0575/RailRhythm12306" target="_blank" rel="noreferrer">RailRhythm12306</a>；<a href="https://github.com/wensimehrp/chinese-railway-gtfs" target="_blank" rel="noreferrer">Chinese Railway GTFS · CC BY 4.0</a>。</p>')}catch(e){tell('无法读取本站缓存清单：'+e.message)}};
