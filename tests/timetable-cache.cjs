@@ -10,6 +10,10 @@ const variant={...record,id:'variant',stops:record.stops.map(s=>[...s])};variant
 const multi={...data,records:[record,variant],index:{G7402:[0,1]}};
 assert.throws(()=>TC.select(multi,'G7402',{...trip,time:{label:'2025-02-23'}},TT.section),/多个不同/);
 assert.equal(TC.select(multi,'G7402',trip,TT.section).record.id,'G7402');
+const overnight={...record,dates:['20250222'],stops:record.stops.map(s=>[s[0],s[1],s[2],1,1])};
+const otherDay={...variant,dates:['20250223'],stops:variant.stops.map(s=>[s[0],s[1],s[2],1,1])};
+const nightBook={...multi,records:[overnight,otherDay]};
+assert.equal(TC.select(nightBook,'G7402',{...trip,time:{label:'2025-02-23'}},TT.section).record,overnight,'service dates refer to origin day, not later boarding day');
 const raw=Buffer.from(JSON.stringify(data)),hash=crypto.createHash('sha256').update(raw).digest('hex'),file=hash+'.json.gz';
 let fetches=0;
 const context={module:{exports:{}},Services:{json:async()=>({schema:1,snapshots:[{date:'2025.02.23',id:'fixture',file,sha256:hash,source:'fixture'}]})},fetch:async()=>{fetches++;return new Response(zlib.gzipSync(raw))},Response,Blob,DecompressionStream,TextDecoder,Uint8Array,crypto:crypto.webcrypto,AbortController,setTimeout,clearTimeout};

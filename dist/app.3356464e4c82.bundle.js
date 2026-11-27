@@ -172,11 +172,11 @@ async function book(item,signal){
 }
 function select(data,train,trip,section){
  const keys=train.split('/'),ids=[...new Set([train,...keys].flatMap(k=>data.index[k]||[]))];
- const day=trip.time.label.replaceAll('-','');const matches=[];
+ const matches=[];
  for(const id of ids){
   const record=data.records[id];if(!record)continue;
   const stops=record.stops.map((s,i)=>({station_name:s[0],arrive_time:s[1],start_time:s[2],arrive_day_diff:s[3],start_day_diff:s[4]??s[3],station_no:i+1,anomaly:s[5]||false}));
-  try{const selected=section(stops,trip.from,trip.to,trip.time.departure);matches.push({record,stops:selected,exactDate:record.dates?.includes(day)||false})}catch{}
+  try{const selected=section(stops,trip.from,trip.to,trip.time.departure),boardingDay=selected[0].start_day_diff||0,originDay=new Date(Date.parse(trip.time.label+'T00:00:00Z')-boardingDay*86400000).toISOString().slice(0,10).replaceAll('-','');matches.push({record,stops:selected,exactDate:record.dates?.includes(originDay)||false})}catch{}
  }
  let found=matches.some(m=>m.exactDate)?matches.filter(m=>m.exactDate):matches;
  if(found.length>1&&trip.time.departure){const timed=found.filter(m=>m.stops[0].start_time===trip.time.departure);if(timed.length)found=timed}

@@ -110,9 +110,11 @@ def save_snapshot(records, date, source, skipped):
     digest = hashlib.sha256(data).hexdigest()
     file = digest + '.json.gz'
     if not (OUT / file).exists():
-        with (OUT / file).open('wb') as target:
+        tmp = (OUT/file).with_suffix('.tmp')
+        with tmp.open('wb') as target:
             with gzip.GzipFile(filename='', mode='wb', fileobj=target, compresslevel=9, mtime=0) as compressed:
                 compressed.write(data)
+        tmp.replace(OUT/file)
     return dict(date=date, source=source, file=file, sha256=digest, trains=len(index), schedules=len(records), excludedSynthetic=skipped, bytes=(OUT/file).stat().st_size)
 
 def sources():
@@ -148,7 +150,7 @@ def main():
     catalog = list(sources())
     errors = []
     pool = ThreadPoolExecutor(max_workers=4)
-    downloads = {s['id']: pool.submit(download, s['url'], args.downloads/(s['id']+s['suffix'])) for s in catalog if s['id'] not in completed}
+    downloads = {s['id']: pool.submit(download, s['url'], args.downloads/(s['id']+s['suffix'])) for s in catalog if s['id'] not in completed or not (OUT/completed[s['id']]['file']).exists()}
     def checkpoint():
         report = dict(schema=1, generatedAt=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), scope='All published bulk files from the listed sources; not all Chinese historical timetables.', discovered=len(catalog), snapshots=sorted(completed.values(), key=lambda s:(s['date'],s['id'])), errors=errors, missingYears=list(range(2019,2025)))
         tmp = manifest.with_suffix('.tmp')
