@@ -11,6 +11,7 @@ function ellipse(a,b,bend=.04){
  out[0]=[...a];out[100]=[b[0],end];return out;
 }
 function geoJSONPath(path){
+ if(path.breaks?.length){const bounds=[0,...path.breaks,path.length],parts=[];for(let i=1;i<bounds.length;i++){const segment=path.slice(bounds[i-1],bounds[i]);if(segment.length<2)continue;const g=geoJSONPath(segment);parts.push(...(g.type==='LineString'?[g.coordinates]:g.coordinates))}return{type:'MultiLineString',coordinates:parts}}
  const wrap=x=>((x+180)%360+360)%360-180,segments=[];let current=[[wrap(path[0][1]),path[0][0]]];
  for(let i=1;i<path.length;i++){let a=current.at(-1),lon=wrap(path[i][1]),lat=path[i][0],delta=lon-a[0];
    if(Math.abs(delta)>180){let adjusted=lon+(delta>180?-360:360),edge=delta>180?-180:180,t=(edge-a[0])/(adjusted-a[0]),cross=a[1]+(lat-a[1])*t;current.push([edge,cross]);segments.push(current);current=[[-edge,cross],[lon,lat]]}else current.push([lon,lat]);

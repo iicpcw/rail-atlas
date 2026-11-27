@@ -2,7 +2,7 @@
 const TimetableCache=(()=>{
 let catalog;const books=new Map(),pending=new Map();
 async function index(signal){
- if(!catalog){const value=await Services.json('data/timetables/index.json',{signal,timeout:5000});if(value.schema!==1||!Array.isArray(value.snapshots))throw Error('时刻表缓存索引无效');catalog=value}
+ if(!catalog){const value=await Services.json('data/timetables/index.json',{signal,timeout:5000});if(value.schema!==1||!Array.isArray(value.snapshots))throw Error('时刻表缓存索引无效');let history={snapshots:[]};try{history=await Services.json('data/timetable-history/index.json',{signal,timeout:5000});if(history.schema!==1||!Array.isArray(history.snapshots))history={snapshots:[]}}catch(e){if(signal?.aborted)throw e}catalog={...value,bulkCount:value.snapshots.length,historyRecords:history.snapshots.reduce((n,s)=>n+s.schedules,0),snapshots:[...value.snapshots,...history.snapshots]}}
  return catalog;
 }
 async function book(item,signal){
@@ -14,7 +14,7 @@ async function book(item,signal){
   signal?.addEventListener('abort',abort,{once:true});
   try{
    if(!/^[a-f0-9]{64}\.json\.gz$/.test(item.file))throw Error('时刻表文件名无效');
-   const r=await fetch('data/timetables/'+item.file,{signal:controller.signal});if(!r.ok)throw Error('本站时刻表 HTTP '+r.status);
+   const base=item.base==='data/timetable-history/'?item.base:'data/timetables/';const r=await fetch(base+item.file,{signal:controller.signal});if(!r.ok)throw Error('本站时刻表 HTTP '+r.status);
    const bytes=await r.arrayBuffer(),stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
    const data=await new Response(stream).arrayBuffer();
    const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),v=>v.toString(16).padStart(2,'0')).join('');
@@ -29,7 +29,7 @@ function select(data,train,trip,section){
  const matches=[];
  for(const id of ids){
   const record=data.records[id];if(!record)continue;
-  const stops=record.stops.map((s,i)=>({station_name:s[0],arrive_time:s[1],start_time:s[2],arrive_day_diff:s[3],start_day_diff:s[4]??s[3],station_no:i+1,anomaly:s[5]||false}));
+  const stops=record.stops.map((s,i)=>({station_name:s[0],arrive_time:s[1],start_time:s[2],arrive_day_diff:s[3],start_day_diff:s[4]??s[3],station_no:i+1,anomaly:s[5]||false,mileage:s[6]}));
   try{const selected=section(stops,trip.from,trip.to,trip.time.departure),boardingDay=selected[0].start_day_diff||0,originDay=new Date(Date.parse(trip.time.label+'T00:00:00Z')-boardingDay*86400000).toISOString().slice(0,10).replaceAll('-','');matches.push({record,stops:selected,exactDate:record.dates?.includes(originDay)||false})}catch{}
  }
  let found=matches.some(m=>m.exactDate)?matches.filter(m=>m.exactDate):matches;
@@ -40,7 +40,7 @@ function select(data,train,trip,section){
 }
 async function lookup(trip,train,section,{signal,knownVersions=[]}={}){
  const meta=await index(signal),day=trip.time.label.replaceAll('-','.');
- const available=meta.snapshots.filter(s=>s.date<=day).sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id));
+ const available=meta.snapshots.filter(s=>s.date<=day&&(!s.codes||[train,...train.split('/')].some(c=>s.codes.includes(c)))).sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id));
  if(!available.length)return null;
  // A newer known snapshot must not silently be replaced by an older cached one.
  const newest=knownVersions.filter(v=>v<=day).sort().at(-1);
