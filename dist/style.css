@@ -15,3 +15,5 @@ body{height:100dvh;overflow:hidden}aside{width:370px;padding:18px 16px 12px;over
 @media(max-width:850px){aside{width:315px;padding:14px 10px}}@media(max-width:600px){body{height:100dvh;display:flex;flex-direction:column}aside{width:100%;height:52dvh;min-height:0;flex-shrink:0;padding:10px;transition:height .2s}.sidebar-scroll{min-height:0;display:block}.sidebar-scroll .intro{display:none}.sidebar-scroll .stats{margin:5px 0}.brand{font-size:18px}.brand b{width:28px;height:28px;font-size:22px}.sidebar-actions{gap:6px}.workbar{grid-template-columns:repeat(4,1fr)}.workbar button{font-size:10px}.sidebar-collapsed aside{height:0;width:100%;padding:0}main{height:auto;min-height:0;flex:1}.site-footer{gap:6px;font-size:9px}.legend{font-size:9px;bottom:43px}.has-trips .drop{margin-top:8px}}
 
 .legend i.air{height:2px;background:#e6bf00;opacity:.55;box-shadow:none}
+
+.manual-add{width:100%;margin-top:8px}.manual-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}.manual-grid label{min-width:0}.manual-grid input{min-width:0}.manual-actions{display:flex;gap:10px;flex-wrap:wrap}@media(max-width:420px){.manual-grid{grid-template-columns:1fr}}

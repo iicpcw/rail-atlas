@@ -3,7 +3,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const files=['services.js','stations.js','station-cache.js','core.js','rail-quality.js','rail-providers.js','rail-service.js','trips.js','calendar.js','cards.js','timetable-cache.js','timetable.js','map-presentation.js','share.js','app.js','ui-controls.js'];
+const files=['services.js','stations.js','station-cache.js','core.js','rail-quality.js','rail-network-cache.js','rail-providers.js','rail-service.js','trips.js','calendar.js','cards.js','timetable-cache.js','timetable.js','map-presentation.js','share.js','app.js','ui-controls.js','manual-entry.js'];
 const code=files.map(name=>'// '+name+'\n'+fs.readFileSync(path.join(root,'dist',name),'utf8')).join('\n;\n');
 const hash=createHash('sha256').update(code).digest('hex').slice(0,12),name='app.'+hash+'.bundle.js';
 fs.writeFileSync(path.join(root,'dist',name),code);

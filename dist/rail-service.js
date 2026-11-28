@@ -112,9 +112,18 @@ async function route(points,signal,progress,trip={}){
     try{
      progress?.('自动修复铁路区间 '+i+'：读取现有轨道并在本机寻路');
      const margin=.12,box=[Math.min(...pair.map(p=>p[0]))-margin,Math.min(...pair.map(p=>p[1]))-margin,Math.max(...pair.map(p=>p[0]))+margin,Math.max(...pair.map(p=>p[1]))+margin];
-     const network=await Services.overpass('way["railway"="rail"]["service"!~"^(yard|siding|spur)$"]('+box.join(',')+');out geom;',signal,progress);
      const approach=full.length?([...full].reverse().find(p=>Core.km(p,pair[0])>.8)||full[0]):pair[0];
-     leg=check(Core.route(network,approach,pair[1],{snapSlack:.75}));
+     const solve=network=>check(Core.route(network,approach,pair[1],{snapSlack:.75}));
+     const cached=typeof RailNetworkCache!=='undefined'?await RailNetworkCache.lookup(pair,signal):null;
+     if(cached)try{leg=solve(cached)}catch(e){if(signal?.aborted)throw e}
+     for(const padding of [.12,.3]){
+      if(leg)break;if(signal?.aborted)throw Error('已停止');
+      const region=[box[0]-(padding-margin),box[1]-(padding-margin),box[2]+padding-margin,box[3]+padding-margin];
+      try{progress?.('自动修复铁路区间 '+i+'：'+(padding>.12?'扩大路网范围并重新连接':'匹配站区可连通股道'));
+       const network=await Services.overpass('way["railway"="rail"]["service"!~"^(yard|siding|spur)$"]('+region.join(',')+');out geom;',signal,progress);leg=solve(network);
+      }catch(e){if(signal?.aborted)throw e;errors.push(e.message);if(/镜像暂不可用/.test(e.message))break}
+     }
+
     }catch(e){if(signal?.aborted)throw e;errors.push(e.message)}
    }
    if(!leg&&!signal?.aborted){

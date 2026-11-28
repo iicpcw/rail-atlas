@@ -129,6 +129,24 @@ return{length,project,nearest,trimArrivalLoop,assess};})();
 if(typeof module!=='undefined')module.exports=RailQuality;
 
 ;
+// rail-network-cache.js
+const RailNetworkCache=(()=>{
+ let index;const regions=new Map();
+ async function lookup(points,signal){
+  try{
+   if(!index)index=await Services.json('data/rail-networks/index.json',{signal,timeout:4000});
+   for(const r of index.regions||[]){const [s,w,n,e]=r.bounds||[];if(!points.every(p=>p[0]>=s&&p[0]<=n&&p[1]>=w&&p[1]<=e)||!/^[-a-z0-9]+\.json$/.test(r.file))continue;
+    if(!regions.has(r.file))regions.set(r.file,await Services.json('data/rail-networks/'+r.file,{signal,timeout:5000}));
+    const data=regions.get(r.file);if(Array.isArray(data.elements))return data.elements;
+   }
+  }catch(e){if(signal?.aborted)throw e}
+  return null;
+ }
+ return{lookup};
+})();
+if(typeof module!=='undefined')module.exports=RailNetworkCache;
+
+;
 // rail-providers.js
 const RailProviders=(()=>{
 const providers=[{id:'primary',url:'https://brouter.de/brouter',profile:'custom_1795737045785'},{id:'bikerouter',url:'https://bikerouter.de/brouter-engine/brouter',profile:'custom_1795757041317'}];
@@ -270,9 +288,18 @@ async function route(points,signal,progress,trip={}){
     try{
      progress?.('自动修复铁路区间 '+i+'：读取现有轨道并在本机寻路');
      const margin=.12,box=[Math.min(...pair.map(p=>p[0]))-margin,Math.min(...pair.map(p=>p[1]))-margin,Math.max(...pair.map(p=>p[0]))+margin,Math.max(...pair.map(p=>p[1]))+margin];
-     const network=await Services.overpass('way["railway"="rail"]["service"!~"^(yard|siding|spur)$"]('+box.join(',')+');out geom;',signal,progress);
      const approach=full.length?([...full].reverse().find(p=>Core.km(p,pair[0])>.8)||full[0]):pair[0];
-     leg=check(Core.route(network,approach,pair[1],{snapSlack:.75}));
+     const solve=network=>check(Core.route(network,approach,pair[1],{snapSlack:.75}));
+     const cached=typeof RailNetworkCache!=='undefined'?await RailNetworkCache.lookup(pair,signal):null;
+     if(cached)try{leg=solve(cached)}catch(e){if(signal?.aborted)throw e}
+     for(const padding of [.12,.3]){
+      if(leg)break;if(signal?.aborted)throw Error('已停止');
+      const region=[box[0]-(padding-margin),box[1]-(padding-margin),box[2]+padding-margin,box[3]+padding-margin];
+      try{progress?.('自动修复铁路区间 '+i+'：'+(padding>.12?'扩大路网范围并重新连接':'匹配站区可连通股道'));
+       const network=await Services.overpass('way["railway"="rail"]["service"!~"^(yard|siding|spur)$"]('+region.join(',')+');out geom;',signal,progress);leg=solve(network);
+      }catch(e){if(signal?.aborted)throw e;errors.push(e.message);if(/镜像暂不可用/.test(e.message))break}
+     }
+
     }catch(e){if(signal?.aborted)throw e;errors.push(e.message)}
    }
    if(!leg&&!signal?.aborted){
@@ -332,7 +359,7 @@ if(typeof module!=='undefined')module.exports=TripData;
 // Calendar days are local itinerary dates, represented as UTC midnight (no timezone conversion).
 const TripCalendar=(()=>{
 const DAY=86400000,iso=n=>new Date(n).toISOString().slice(0,10);
-function kind(t){if(t.mode==='air')return'air';const text=[t.from,t.to,t.raw?.['承运'],t.raw?.['交通方式'],t.sheet].join(' ');if(/^[GDKTZYCSP]\d/i.test(t.raw?.['班次']||''))return'china';if(/日本|新橋|新桥|横浜|橫濱|横滨|日暮里|秋葉原|秋叶原|大宮|大宫|浅草|淺草|八王子|船橋|船桥|広島|广岛|福岡|福冈|倉敷|金沢|金泽|小倉|小仓|新大阪|JR(?:E|W|東|西|东|九州|北海道|四国)?|東日本|西日本|京成|小田急|東急|东急|京急|東京|东京|上野|新宿|渋谷|涩谷|渋谷|浜松町|滨松町|亀戸|龟户|恵比寿|惠比寿|吉祥寺|下北沢|下北泽|梅田|大阪|京都|名古屋|博多|なんば|札幌|品川|池袋|成田|羽田|[ぁ-んァ-ヶ]/i.test(text))return'japan';if(/广东城际|廣東城際|地铁|地下铁|有轨电车/.test(text))return'local';return'china'}
+function kind(t){if(t.mode==='air')return'air';if(t.raw?.['交通方式']==='日本铁路')return'japan';const text=[t.from,t.to,t.raw?.['承运'],t.raw?.['交通方式'],t.sheet].join(' ');if(/^[GDKTZYCSP]\d/i.test(t.raw?.['班次']||''))return'china';if(/日本|新橋|新桥|横浜|橫濱|横滨|日暮里|秋葉原|秋叶原|大宮|大宫|浅草|淺草|八王子|船橋|船桥|広島|广岛|福岡|福冈|倉敷|金沢|金泽|小倉|小仓|新大阪|JR(?:E|W|東|西|东|九州|北海道|四国)?|東日本|西日本|京成|小田急|東急|东急|京急|東京|东京|上野|新宿|渋谷|涩谷|渋谷|浜松町|滨松町|亀戸|龟户|恵比寿|惠比寿|吉祥寺|下北沢|下北泽|梅田|大阪|京都|名古屋|博多|なんば|札幌|品川|池袋|成田|羽田|[ぁ-んァ-ヶ]/i.test(text))return'japan';if(/广东城际|廣東城際|地铁|地下铁|有轨电车/.test(text))return'local';return'china'}
 function mode(raw,from,to){return /航空|飞行|航班/.test(raw['交通方式']||'')||!!raw['航班号']||/^(?!JR)(?:[A-Z]{2}|\d[A-Z])\d{1,4}[A-Z]?$/i.test(raw['班次']||'')||(/^[a-z]{3}$/i.test(from)||/^[a-z]{3}$/i.test(to))?'air':'rail'}
 function normalize(raw){raw['日期']=raw['出发日期']||raw['日期']||'';raw['班次']=raw['班次']||raw['车次']||raw['航班号']||'';return raw}
 function validate(t){const errors=[],type=kind(t);if(!t.from)errors.push('缺少出发地');if(!t.to)errors.push('缺少到达地');if(type==='air'){if(t.from&&!/^[A-Z]{3}$/i.test(t.from))errors.push('出发地必须为机场三字码');if(t.to&&!/^[A-Z]{3}$/i.test(t.to))errors.push('到达地必须为机场三字码');if(!String(t.raw?.['班次']||'').trim())errors.push('缺少航班号')}else{if(t.time?.day==null)errors.push('缺少有效出发日期（年份可取自 Sheet）');if(type==='china'&&!String(t.raw?.['班次']||'').trim())errors.push('中国国铁缺少车次')}return errors}
@@ -361,7 +388,7 @@ const node=document.createElement('div');node.className='route-cards';node.inner
 // timetable-cache.js
 // Same-origin, immutable public timetable snapshots. Never use future data for a past trip.
 const TimetableCache=(()=>{
-const remote=typeof location!=='undefined'&&location.hostname==='iicpcw.github.io'?'https://raw.githubusercontent.com/iicpcw/rail-atlas-data/main/':'';
+const remote=typeof location!=='undefined'?'https://raw.githubusercontent.com/iicpcw/rail-atlas-data/main/':'';
 let catalog;const books=new Map(),pending=new Map();
 async function index(signal){
  if(!catalog){let origin=remote,value;try{value=await Services.json(origin+'data/timetables/index.json',{signal,timeout:5000})}catch(e){if(signal?.aborted)throw e;origin='';value=await Services.json('data/timetables/index.json',{signal,timeout:5000})}if(value.schema!==1||!Array.isArray(value.snapshots))throw Error('时刻表缓存索引无效');let history={snapshots:[]};try{history=await Services.json(origin+'data/timetable-history/index.json',{signal,timeout:5000});if(history.schema!==1||!Array.isArray(history.snapshots))history={snapshots:[]}}catch(e){if(signal?.aborted)throw e}catalog={...value,bulkCount:value.snapshots.length,historyRecords:history.snapshots.reduce((n,s)=>n+s.schedules,0),snapshots:[...value.snapshots.map(s=>({...s,origin})),...history.snapshots.map(s=>({...s,origin}))]}}
@@ -534,7 +561,7 @@ $('clear').onclick=()=>{if(busy)return tell('请先停止正在进行的生成�
 
 $('archive').onclick=async()=>{if(busy||!trips.length)return tell('请先导入行程，且等待当前任务完成');busy=true;cancel=false;controller=new AbortController();$('stop').hidden=false;for(const id of ['file','sheet','routing','archive'])$(id).disabled=true;render();try{const r=await Timetable.archive(trips,{signal:controller.signal,onProgress:p=>tell('历史缓存 '+p.done+'/'+p.total+' · '+p.train+' · '+p.version)});tell('历史缓存完成：'+r.ok+' 份有停站表，'+r.missing+' 份无此车次，'+r.errors+' 份查询失败。按年代表快照及行程日期缓存，并非所有日期全量数据。')}catch(e){tell(e.message)}finally{busy=false;$('stop').hidden=true;for(const id of ['file','sheet','routing','archive'])$(id).disabled=false;render()}};
 
-$('cacheInfo').onclick=async()=>{try{const m=await TimetableCache.index(),years=new Map();for(const s of m.snapshots){const y=s.date.slice(0,4),v=years.get(y)||{versions:0,max:0};v.versions++;v.max=Math.max(v.max,s.trains);years.set(y,v)}modal('<h2>本站时刻表缓存</h2><p>已保存 '+(m.bulkCount||m.snapshots.length)+' 份批量快照，另补充 '+(m.historyRecords||0)+' 条历史时刻记录。历史补充尚在进行，未完成的版本不计为全量。生成时按需读取对应快照。</p><ul>'+[...years].map(([y,v])=>'<li>'+esc(y)+' 年：'+v.versions+' 个快照，单份缓存最多 '+v.max+' 个车次号（含换号）。</li>').join('')+'</ul><p>尚未取得批量缓存的年份：'+esc((m.missingYears||[]).join('、')||'无')+'。这些年份仍按需查询 RailLog，并缓存在本机；不代表已经保存到 GitHub。</p><p>快照是采集时的停站表，不保证历史某一天实际开行；部分源文件本身可能不完整。不会用晚于行程日期的快照替代。</p><p>来源：<a href="https://github.com/wj0575/RailRhythm12306" target="_blank" rel="noreferrer">RailRhythm12306</a>；<a href="https://github.com/wensimehrp/chinese-railway-gtfs" target="_blank" rel="noreferrer">Chinese Railway GTFS · CC BY 4.0</a>。</p>')}catch(e){tell('无法读取本站缓存清单：'+e.message)}};
+$('cacheInfo').onclick=async()=>{try{const m=await TimetableCache.index(),years=new Map();for(const s of m.snapshots){const y=s.date.slice(0,4),v=years.get(y)||{versions:0,max:0};v.versions++;v.max=Math.max(v.max,s.trains);years.set(y,v)}modal('<h2>本站时刻表缓存</h2><p>已保存 '+(m.bulkCount||m.snapshots.length)+' 份批量快照，另补充 '+(m.historyRecords||0)+' 条历史时刻记录。全量后台下载已停止；未收录车次按需查询历史接口。未完成的版本不计为全量。生成时按需读取对应快照。</p><ul>'+[...years].map(([y,v])=>'<li>'+esc(y)+' 年：'+v.versions+' 个快照，单份缓存最多 '+v.max+' 个车次号（含换号）。</li>').join('')+'</ul><p>尚未取得批量缓存的年份：'+esc((m.missingYears||[]).join('、')||'无')+'。未命中已保存快照的车次按需查询 RailLog，并缓存在本机。</p><p>快照是采集时的停站表，不保证历史某一天实际开行；部分源文件本身可能不完整。不会用晚于行程日期的快照替代。</p><p>来源：<a href="https://github.com/wj0575/RailRhythm12306" target="_blank" rel="noreferrer">RailRhythm12306</a>；<a href="https://github.com/wensimehrp/chinese-railway-gtfs" target="_blank" rel="noreferrer">Chinese Railway GTFS · CC BY 4.0</a>。</p>')}catch(e){tell('无法读取本站缓存清单：'+e.message)}};
 
 ;
 // ui-controls.js
@@ -555,3 +582,20 @@ $('share').onclick=async()=>{
 if(typeof location!=='undefined'&&location.hostname==='iicpcw.github.io'){
  const counter=document.createElement('script');counter.async=true;counter.src='https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js';counter.onerror=()=>{const el=document.querySelector('.site-footer small');if(el)el.textContent='访客统计暂不可用'};document.head.appendChild(counter);
 }
+
+;
+// manual-entry.js
+const ManualEntry=(()=>{
+ function make(values,id){const raw={'日期':values.date||'','到达日期':values.arrivalDate||'','班次':(values.number||'').trim(),'出发地':(values.from||'').trim(),'到达地':(values.to||'').trim(),'出发时间':values.departure||'','到达时间':values.arrival||'','交通方式':values.kind==='air'?'航空':values.kind==='japan'?'日本铁路':'中国国铁'};
+ if(values.kind==='air'){raw['出发地']=raw['出发地'].toUpperCase();raw['到达地']=raw['到达地'].toUpperCase();raw['班次']=raw['班次'].toUpperCase()}
+ const trip={id,selected:true,raw,from:raw['出发地'],to:raw['到达地'],mode:values.kind==='air'?'air':'rail',time:TripData.date(raw,'手动填写'),sheet:'手动填写',row:id+1,via:'',error:''};
+ const errors=TripCalendar.validate(trip);if(raw['到达日期']&&/无效|早于/.test(TripCalendar.span(trip).note))errors.push('到达日期无效或早于出发日期');if(errors.length)throw Error(errors.join('；'));return trip;
+ }
+ function open(){if(busy)return tell('请等待当前生成完成');modal('<h2>手动添加行程</h2><form id="manualForm"><label>行程类型<select id="manualKind"><option value="china">中国国铁</option><option value="japan">日本铁路</option><option value="air">航空</option></select></label><p id="manualRules"></p><div class="manual-grid"><label><span id="manualDateLabel">出发日期 *</span><input id="manualDate" type="date"></label><label>到达日期（可选）<input id="manualArrivalDate" type="date"></label><label><span id="manualFromLabel">出发站 *</span><input id="manualFrom" required></label><label><span id="manualToLabel">到达站 *</span><input id="manualTo" required></label><label><span id="manualNumberLabel">车次 *</span><input id="manualNumber"></label><label>出发时间（可选）<input id="manualDeparture" type="time"></label><label>到达时间（可选）<input id="manualArrival" type="time"></label></div><p id="manualError" class="bad" role="alert"></p><div class="manual-actions"><button type="submit" value="generate" class="primary">添加并生成</button><button type="submit" value="save">仅添加</button></div></form>');
+ const update=()=>{const kind=$('manualKind').value,air=kind==='air',china=kind==='china';$('manualDate').required=!air;$('manualNumber').required=air||china;$('manualDateLabel').textContent=air?'出发日期（可选）':'出发日期 *';$('manualNumberLabel').textContent=air?'航班号 *':china?'车次 *':'车次（可选）';$('manualFromLabel').textContent=air?'出发机场三字码 *':'出发站（精确站名） *';$('manualToLabel').textContent=air?'到达机场三字码 *':'到达站（精确站名） *';$('manualRules').textContent=air?'机场三字码和航班号必填，日期可不填。':china?'出发日期、车次和精确起终站名必填。':'出发日期和精确起终站名必填，无需选择运营方。';};$('manualKind').onchange=update;update();
+ $('manualForm').onsubmit=e=>{e.preventDefault();if(busy)return;try{const t=make({kind:$('manualKind').value,date:$('manualDate').value,arrivalDate:$('manualArrivalDate').value,number:$('manualNumber').value,from:$('manualFrom').value,to:$('manualTo').value,departure:$('manualDeparture').value,arrival:$('manualArrival').value},trips.reduce((m,t)=>Math.max(m,t.id),-1)+1);trips.push(t);selectedDay='';$('filter').value='all';$('search').value='';$('dialog').close();render();if(e.submitter?.value==='save')tell('已添加行程，可继续填写或勾选后生成');else run([t])}catch(error){$('manualError').textContent=error.message}};
+ }
+ return{make,open};
+})();
+if(typeof document!=='undefined')$('addTrip').onclick=ManualEntry.open;
+if(typeof module!=='undefined')module.exports=ManualEntry;

@@ -24,12 +24,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Cache every available public bulk timetable
-        run: |
-          if [ ! -f dist/data/timetables/index.json ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            python3 scripts/cache-timetables.py
-          fi
-          python3 scripts/verify-timetables.py
       - name: Build versioned application bundle
         run: node scripts/build.mjs
       - name: Check JavaScript and route edge cases
@@ -43,6 +37,7 @@ jobs:
           node tests/bundle.cjs
           node tests/automatic-repair.cjs
           node tests/station-cache.cjs
+          node tests/manual-entry.cjs
           node tests/routing-quality.cjs
           node tests/rail-service.cjs
           node tests/calendar.cjs
@@ -51,15 +46,6 @@ jobs:
           node tests/selection.cjs
           node tests/http-errors.cjs
           node test-generation.cjs
-      - name: Save verified timetable data in GitHub
-        run: |
-          git add dist/data/timetables
-          if ! git diff --cached --quiet; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'Cache all available public bulk timetable snapshots'
-            git push origin HEAD:main
-          fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

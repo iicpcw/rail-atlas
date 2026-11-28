@@ -1,6 +1,6 @@
 // Same-origin, immutable public timetable snapshots. Never use future data for a past trip.
 const TimetableCache=(()=>{
-const remote=typeof location!=='undefined'&&location.hostname==='iicpcw.github.io'?'https://raw.githubusercontent.com/iicpcw/rail-atlas-data/main/':'';
+const remote=typeof location!=='undefined'?'https://raw.githubusercontent.com/iicpcw/rail-atlas-data/main/':'';
 let catalog;const books=new Map(),pending=new Map();
 async function index(signal){
  if(!catalog){let origin=remote,value;try{value=await Services.json(origin+'data/timetables/index.json',{signal,timeout:5000})}catch(e){if(signal?.aborted)throw e;origin='';value=await Services.json('data/timetables/index.json',{signal,timeout:5000})}if(value.schema!==1||!Array.isArray(value.snapshots))throw Error('时刻表缓存索引无效');let history={snapshots:[]};try{history=await Services.json(origin+'data/timetable-history/index.json',{signal,timeout:5000});if(history.schema!==1||!Array.isArray(history.snapshots))history={snapshots:[]}}catch(e){if(signal?.aborted)throw e}catalog={...value,bulkCount:value.snapshots.length,historyRecords:history.snapshots.reduce((n,s)=>n+s.schedules,0),snapshots:[...value.snapshots.map(s=>({...s,origin})),...history.snapshots.map(s=>({...s,origin}))]}}
