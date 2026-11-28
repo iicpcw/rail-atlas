@@ -39,3 +39,5 @@
 ## 开发
 
 修改后运行 `node scripts/build.mjs`，执行 tests 下的 Node 测试及 `node test-generation.cjs`。GitHub Actions 校验并部署 dist。只发布 index.html 引用的版本化 bundle，不发布本地 QA 页面、用户表格或下载临时文件。
+
+生成性能：最多两条独立行程并行处理；同一取消范围内相同 GET 请求合并；经过校验的本地路网优先于远程寻路。公共接口仍按主机排队和限速，403/429 冷却保持有效。

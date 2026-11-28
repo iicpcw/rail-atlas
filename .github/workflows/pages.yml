@@ -38,6 +38,8 @@ jobs:
           node tests/automatic-repair.cjs
           node tests/station-cache.cjs
           node tests/manual-entry.cjs
+          node tests/performance.cjs
+          node tests/batch-workers.cjs
           node tests/routing-quality.cjs
           node tests/rail-service.cjs
           node tests/calendar.cjs

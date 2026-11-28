@@ -78,6 +78,10 @@ async function route(points,signal,progress,trip={}){
   const stops=trip.timetable?.stops,indices=trip._routeStopIndices||points.map((_,n)=>n),expected=stops?Number(stops[indices[i]]?.mileage)-Number(stops[indices[i-1]]?.mileage):0;
   const check=(path)=>{RailQuality.assess(path,pair,{expectedKm:expected>0?expected:0});merge(full,path,points[i-1]);return path};
   try{if(leg)check(leg)}catch{leg=null}
+  // Validated local geometry is faster than repeating unsuccessful remote snaps.
+  if(!leg&&typeof RailNetworkCache!=='undefined'){
+   try{const network=await RailNetworkCache.lookup(pair,signal);if(network){const approach=full.length?([...full].reverse().find(p=>Core.km(p,pair[0])>.8)||full[0]):pair[0];leg=check(Core.route(network,approach,pair[1],{snapSlack:.75}));await Services.write(key,leg)}}catch(e){if(signal?.aborted)throw e}
+  }
   if(!leg){
    const errors=[];
    // Retry bounded alternatives for every problematic interval, not train-specific exceptions.

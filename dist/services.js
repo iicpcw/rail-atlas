@@ -7,10 +7,18 @@ const queues=new Map(),nextAt=new Map(),blocked=new Map();
 function pause(ms,signal){if(signal?.aborted)return Promise.reject(Error('已停止'));return new Promise((resolve,reject)=>{const abort=()=>{clearTimeout(timer);reject(Error('已停止'))},timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve()},ms);signal?.addEventListener('abort',abort,{once:true})})}
 function hostOf(url){try{return new URL(url).hostname}catch{return ''}}
 function blockUntil(host){let stored=0;try{stored=Number(localStorage.getItem('rail-cooldown:'+host))||0}catch{}return Math.max(blocked.get(host)||0,stored)}
-async function json(url,{signal,timeout=12000,...options}={}){const host=hostOf(url),interval=host==='api.openrailwaymap.org'?1500:['brouter.de','bikerouter.de'].includes(host)?2500:host==='api.raillog.top'?500:0;
+async function fetchJSON(url,{signal,timeout=12000,...options}={}){const host=hostOf(url),interval=host==='api.openrailwaymap.org'?1500:['brouter.de','bikerouter.de'].includes(host)?2500:host==='api.raillog.top'?500:0;
  const task=async()=>{if(signal?.aborted)throw Error('已停止');if(blockUntil(host)>Date.now()){const e=Error(host+' 暂停请求：此前服务拒绝访问或限流，请在 '+new Date(blockUntil(host)).toLocaleTimeString()+' 后重试');e.status=blocked.has(host)?403:429;e.service=host;e.blocked=true;throw e}if(interval)await pause(Math.max(0,(nextAt.get(host)||0)-Date.now()),signal);nextAt.set(host,Date.now()+interval);
  const c=new AbortController();let timer;const abort=()=>c.abort();signal?.addEventListener('abort',abort,{once:true});try{return await Promise.race([fetch(url,{...options,signal:c.signal}).then(async r=>{if(!r.ok){let detail='';try{detail=(await r.text()).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,350)}catch{}const e=Error((host?host+'：':'')+'HTTP '+r.status+(detail?' · '+detail:''));e.status=r.status;e.service=host;e.detail=detail;if(r.status===403||r.status===429){const value=r.headers?.get?.('Retry-After'),seconds=Number(value),retry=value?(Number.isFinite(seconds)?seconds*1000:Date.parse(value)-Date.now()):0,until=Date.now()+Math.max(r.status===403?3600000:60000,retry||0);blocked.set(host,until);try{localStorage.setItem('rail-cooldown:'+host,String(until))}catch{}e.blocked=true;e.message+='；已暂停该服务请求，避免继续触发限制'}throw e}return r.json()}),new Promise((_,reject)=>{timer=setTimeout(()=>{c.abort();reject(Error((host?host+'：':'')+'查询超时'))},timeout);c.signal.addEventListener('abort',()=>reject(Error(signal?.aborted?'已停止':'查询超时')),{once:true})})])}finally{clearTimeout(timer);signal?.removeEventListener('abort',abort)}};
  if(!interval)return task();const job=(queues.get(host)||Promise.resolve()).catch(()=>{}).then(task);queues.set(host,job);return job;
+}
+// Coalesce identical GETs within one cancellation scope; retain per-host pacing.
+const httpPending=new Map(),signalPending=new WeakMap();
+async function json(url,options={}){
+ if(options.method&&options.method!=='GET')return fetchJSON(url,options);
+ let scope=httpPending;if(options.signal){scope=signalPending.get(options.signal);if(!scope){scope=new Map();signalPending.set(options.signal,scope)}}
+ if(scope.has(url))return scope.get(url);
+ const job=fetchJSON(url,options);scope.set(url,job);try{return await job}finally{if(scope.get(url)===job)scope.delete(url)}
 }
 const health=new Map();let sequence=0;
 const endpoints=['https://maps.mail.ru/osm/tools/overpass/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass-api.de/api/interpreter'];
